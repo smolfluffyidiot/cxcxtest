@@ -1,7 +1,7 @@
 var APP_PREFIX = window.APP_PREFIX || ''; // repo may define this already
 var STORAGE_KEY = APP_PREFIX + 'partner_wordcards_v1';
 var POPUP_ID = 'partner-add-card-popup';
-var DEFAULT_CHANCE = 0.12; // default 12% chance
+var DEFAULT_CHANCE = 1; // default 12% chance
 
 var state = {
     chance: DEFAULT_CHANCE,
