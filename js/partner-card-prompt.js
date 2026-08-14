@@ -1,5 +1,5 @@
 (function(){
-  const OFFER_PROBABILITY_DEFAULT = 0.08;
+  const OFFER_PROBABILITY_DEFAULT = 1;
 
   function _escHtml(s){
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
