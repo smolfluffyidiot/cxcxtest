@@ -1,15 +1,15 @@
 (function(){
     // partner-card-prompt.js
     // Fixes:
-    // - Avoid prompting on page refresh by waiting until messages stabilize, marking existing items processed.
-    // - When user accepts, persist to partner wordcards AND attempt to sync into common reply libraries (best-effort),
-    //   and emit an event `partnerCardAdded` so host app can react.
+    // - Avoid prompting on page refresh by waiting until messages stabilize + a startup cooldown.
+    // - When accepting, aggressively try to sync the added card into common reply libraries and call render/save hooks.
+    // - Provide force option to forcePromptFor to bypass processed checks in testing.
     //
-    // Drop this file in js/partner-card-prompt.js and load after your app scripts.
+    // Place this file after your main app scripts.
 
     var APP_PREFIX = window.APP_PREFIX || '';
     var STORAGE_KEY = APP_PREFIX + 'partner_wordcards_v1';
-    var POPUP_ID = 'partner-add-card-popup-v3';
+    var POPUP_ID = 'partner-add-card-popup-v4';
     var DEFAULT_CHANCE = 1;
 
     var state = { chance: DEFAULT_CHANCE, enabled: true, installed: false };
@@ -17,29 +17,36 @@
     var _processedIds = new Set();
     var _lastUserSent = null;
     var _installMark = Date.now();
+    var _messagesBaseline = { lastLen: 0, lastTimestamp: 0 };
+    var _startupCooldownMs = 3000; // extra grace after baseline before allowing prompts
+    var _allowPromptsAt = 0;
 
     function log(){ try { console.debug('[PartnerCardPrompt]', ...arguments); } catch(e){} }
     function warn(){ try { console.warn('[PartnerCardPrompt]', ...arguments); } catch(e){} }
     function _escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     function _nowISO(){ return (new Date()).toISOString(); }
 
-    // storage helpers (localforage preferred)
+    // storage helpers
     async function _getStored(){ try{ if(window.localforage) { var v = await localforage.getItem(STORAGE_KEY); return Array.isArray(v)?v:[]; } else { var r = localStorage.getItem(STORAGE_KEY); return r?JSON.parse(r):[]; } }catch(e){ warn('read store fail', e); return []; } }
     async function _setStored(arr){ try{ if(window.localforage) await localforage.setItem(STORAGE_KEY, arr); else localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }catch(e){ warn('write store fail', e); } }
 
     async function addPartnerWordcard(text){
         if(!text || !String(text).trim()) return false;
         var arr = await _getStored();
-        if(arr.some(function(c){ return c.text === text; })) return false;
+        if(arr.some(function(c){ return c.text === text; })) {
+            log('card duplicate, not adding to partner storage');
+            // still attempt syncing to reply libs in case it's missing there
+            trySyncToReplyLibraries(text);
+            return false;
+        }
         var item = { id: Date.now(), text: text, createdAt: _nowISO() };
         arr.unshift(item);
         await _setStored(arr);
         renderPartnerWordCards(arr);
         if(typeof showNotification === 'function') showNotification('已添加到对方字卡 ✓','success',1800);
-        // Try to sync into host reply libraries (best-effort)
         trySyncToReplyLibraries(text);
-        // Emit event so host can respond
         try { window.dispatchEvent(new CustomEvent('partnerCardAdded', { detail: { text: text, item: item } })); } catch(e){}
+        log('added partner card', item);
         return true;
     }
 
@@ -74,39 +81,60 @@
         });
     }
 
-    // Attempt to push the added card into likely reply libraries (best-effort, non-destructive)
+    // Best-effort sync to app reply libraries and UI
     function trySyncToReplyLibraries(text){
         try{
-            // Common arrays used by this project (best-effort)
-            var candidates = [
-                'replyLibrary','reply_library','replyLibraryData','customReplies','mainReplyLibrary','masterReplies'
-            ];
             var pushed = false;
-            candidates.forEach(function(name){
+            // textual reply arrays
+            var textLibNames = ['replyLibrary','reply_library','replyLibraryData','customReplies','mainReplyLibrary','masterReplies','customRepliesList'];
+            textLibNames.forEach(function(name){
                 try{
                     var v = window[name];
                     if(Array.isArray(v)){
-                        // ensure we don't duplicate
-                        if(!v.some(function(it){ return (typeof it === 'string' && it === text) || (it && it.text === text); })){
-                            // push string if array of strings, else push object
-                            if(typeof v[0] === 'string' || v.length === 0) v.push(text);
+                        // determine type of entries: strings or objects?
+                        var isStringArray = v.length === 0 || typeof v[0] === 'string';
+                        var exists = v.some(function(it){ return (isStringArray && it === text) || (!isStringArray && it && it.text === text); });
+                        if(!exists){
+                            if(isStringArray) v.push(text);
                             else v.push({ id: Date.now(), text: text });
                             pushed = true;
-                            log('synced to', name);
+                            log('synced text to', name);
                         }
                     }
                 }catch(e){}
             });
-            // Some apps persist via a saveData / throttledSaveData function — call if available
+
+            // sticker/image library
+            try{
+                if(typeof text === 'string' && /^data:.*image\/|https?:\/\/.*\.(?:png|jpe?g|gif|webp)/i.test(text)){
+                    if(Array.isArray(window.stickerLibrary)){
+                        if(!window.stickerLibrary.includes(text)){
+                            window.stickerLibrary.push(text);
+                            pushed = true;
+                            log('synced image text to stickerLibrary');
+                        }
+                    }
+                    if(Array.isArray(window.myStickerLibrary)){
+                        if(!window.myStickerLibrary.includes(text)){
+                            window.myStickerLibrary.unshift(text);
+                            pushed = true;
+                            log('synced image to myStickerLibrary');
+                        }
+                    }
+                }
+            }catch(e){}
+
+            // If pushed into any in-memory libs, call UI render/save hooks if available
             if(pushed){
+                if(typeof renderReplyLibrary === 'function') try{ renderReplyLibrary(); }catch(e){}
+                if(typeof renderComboContent === 'function') try{ renderComboContent('my-sticker'); }catch(e){}
                 if(typeof throttledSaveData === 'function') try{ throttledSaveData(); }catch(e){}
                 else if(typeof saveData === 'function') try{ saveData(); }catch(e){}
             }
-            // Also try to add to stickerLibrary if it's an array of image URLs? (not applicable here)
         }catch(e){ warn('syncToReplyLibraries failed', e); }
     }
 
-    // find relevant user message prior to partnerMsg; fallback to last captured user-sent message
+    // Attempt to find relevant user message; fallback to captured last user-sent
     function findRelevantUserMessage(partnerMsg){
         var msgs = Array.isArray(window.messages) ? window.messages : [];
         if(msgs && msgs.length){
@@ -130,19 +158,28 @@
                 if(isUser2 && mm.type !== 'system' && (mm.text || mm.image)) return mm;
             }
         }
-        // fallback to last captured user-sent (may not yet be in messages)
+        // fallback to the last captured outgoing message
         if(_lastUserSent && _lastUserSent.text) return _lastUserSent;
         return null;
     }
 
-    function _shouldProcessMessage(m, initialBaseline){
+    // process filters: only process messages newer than baseline and not already processed
+    function _shouldProcessMessage(m, baseline){
         if(!m) return false;
         if(m.id !== undefined && _processedIds.has(m.id)) return false;
-        // if message has timestamp and it's older than baseline timestamp, skip
-        if(m.timestamp && initialBaseline && initialBaseline.lastTimestamp){
-            var ts = (new Date(m.timestamp)).getTime();
-            if(!isNaN(ts) && ts <= initialBaseline.lastTimestamp) return false;
+        // if baseline provided, skip messages older or equal to baseline's lastTimestamp (no re-trigger on load)
+        if(baseline && baseline.lastTimestamp){
+            if(m.timestamp){
+                var ts = (new Date(m.timestamp)).getTime();
+                if(!isNaN(ts) && ts <= baseline.lastTimestamp) return false;
+            } else {
+                // if no timestamp, compare by length baseline (if message index <= baseline.lastLen, skip)
+                // We can't determine index here, so be conservative and allow only messages with id > install time
+                if(m.id !== undefined && typeof m.id === 'number' && m.id <= _installMark) return false;
+            }
         }
+        // also enforce startup cooldown
+        if(Date.now() < _allowPromptsAt) return false;
         return true;
     }
 
@@ -176,50 +213,60 @@
                     if(typeof showNotification === 'function') showNotification('没有可用消息可添加', 'warning', 1800);
                     return;
                 }
-                await addPartnerWordcard(candidateText);
+                var ok = await addPartnerWordcard(candidateText);
+                if(ok) {
+                    log('accepted and stored candidate');
+                } else {
+                    log('accepted but storage indicated duplicate or not added');
+                }
             });
             overlay.addEventListener('click', function(e){ if(e.target === overlay){ overlay.remove(); if(typeof showNotification === 'function') showNotification('已取消', 'info', 1000); } });
         }catch(e){ warn('show popup error', e); }
     }
 
-    // core decision
-    function maybePromptOnPartnerMessage(partnerMsg, initialBaseline){
+    function maybePromptOnPartnerMessage(partnerMsg, baseline){
         try{
             if(!state.enabled) return;
             if(!partnerMsg) return;
             if(partnerMsg.type === 'system') return;
-            if(!_shouldProcessMessage(partnerMsg, initialBaseline)){ log('skip old/processed partnerMsg'); _markProcessed(partnerMsg); return; }
+            if(!_shouldProcessMessage(partnerMsg, baseline)){
+                log('skip old/processed partnerMsg');
+                _markProcessed(partnerMsg);
+                return;
+            }
+            // random check
             var r = Math.random();
             log('maybePrompt chance', r, 'limit', state.chance);
-            if(r > state.chance){ _markProcessed(partnerMsg); return; }
+            if(r > state.chance){
+                _markProcessed(partnerMsg);
+                return;
+            }
             var candidate = findRelevantUserMessage(partnerMsg);
             showPartnerAddPopup(partnerMsg, candidate);
             _markProcessed(partnerMsg);
         }catch(e){ warn('maybePrompt error', e); }
     }
 
-    // Install helpers ----------------------------------------------------------
+    // Hook installation -------------------------------------------------------
 
-    // Patch addMessage to detect both partner and user messages (capture last user-sent quickly)
-    function installAddMessageHook(initialBaseline){
+    // addMessage hook
+    function installAddMessageHook(baseline){
         try{
             if(typeof window.addMessage === 'function' && !window.__pcp_addMessageHooked){
                 var orig = window.addMessage;
                 window.addMessage = function(msg){
                     try{ var res = orig.apply(this, arguments); }catch(e){ try{ orig(msg); }catch(ee){} }
                     try{
-                        // capture user-sent messages
+                        // capture outgoing user messages
                         if(msg && (msg.sender === 'user' || msg.sender === 'me' || msg.role === 'user')){
                             _lastUserSent = { id: msg.id !== undefined ? msg.id : Date.now(), text: msg.text || '', timestamp: msg.timestamp || new Date().toISOString(), sender: 'user', type: msg.type || 'normal' };
                             log('captured lastUserSent from addMessage', _lastUserSent);
                         }
-                        // detect partner-like and process (respect initialBaseline to avoid reload prompts)
+                        // detect partner-like messages
                         if(msg && msg.sender && msg.sender !== 'user'){
-                            if(_shouldProcessMessage(msg, initialBaseline)){
-                                log('addMessage hook detected partner msg', msg);
-                                maybePromptOnPartnerMessage(msg, initialBaseline);
+                            if(_shouldProcessMessage(msg, baseline)){
+                                maybePromptOnPartnerMessage(msg, baseline);
                             } else {
-                                log('addMessage ignored old/processed msg');
                                 _markProcessed(msg);
                             }
                         }
@@ -232,7 +279,6 @@
         }catch(e){ warn('addMessage hook install failed', e); }
     }
 
-    // Wrap sendMessage to capture the user's message immediately (if app exposes it)
     function tryWrapSendMessage(){
         try{
             if(typeof window.sendMessage === 'function' && !window.__pcp_sendMessageWrapped){
@@ -261,13 +307,13 @@
         }catch(e){ warn('wrap sendMessage failed', e); }
     }
 
-    // Poll fallback to detect appended messages; mark existing messages as processed first
+    // poll fallback
     var _pollHandle = null;
-    function startMessagesPoll(initialBaseline){
+    function startMessagesPoll(baseline){
         try{
             if(_pollHandle) return;
             var lastLen = Array.isArray(window.messages)?window.messages.length:0;
-            // mark existing ids as processed
+            // mark current messages as processed to avoid initial popups
             try{ if(Array.isArray(window.messages)){ window.messages.forEach(function(m){ if(m && m.id !== undefined) _processedIds.add(m.id); }); } }catch(e){}
             _pollHandle = setInterval(function(){
                 try{
@@ -277,17 +323,14 @@
                         for(var i = lastLen; i < arr.length; i++){
                             var m = arr[i];
                             if(!m) continue;
-                            // capture user messages added to messages array
                             if(m && (m.sender === 'user' || m.sender === 'me' || m.role === 'user')){
                                 _lastUserSent = { id: m.id !== undefined ? m.id : Date.now(), text: m.text || '', timestamp: m.timestamp || new Date().toISOString(), sender: 'user', type: m.type || 'normal' };
                                 log('captured lastUserSent from poll', _lastUserSent);
                             }
                             if(m && m.sender && m.sender !== 'user'){
-                                if(_shouldProcessMessage(m, initialBaseline)){
-                                    log('poll detected partner msg', m);
-                                    maybePromptOnPartnerMessage(m, initialBaseline);
+                                if(_shouldProcessMessage(m, baseline)){
+                                    maybePromptOnPartnerMessage(m, baseline);
                                 } else {
-                                    log('poll ignored old/processed msg', m && (m.id || m.timestamp));
                                     _markProcessed(m);
                                 }
                             }
@@ -297,15 +340,15 @@
                         lastLen = arr.length;
                     }
                 }catch(e){}
-            }, 700);
+            }, 800);
             log('started messages poll');
         }catch(e){ warn('startMessagesPoll err', e); }
     }
     function stopMessagesPoll(){ if(_pollHandle){ clearInterval(_pollHandle); _pollHandle=null; log('stopped messages poll'); } }
 
-    // DOM observer fallback: tries to detect new message DOM nodes and capture user messages
+    // DOM observer fallback
     var _observer = null;
-    function startDOMObserver(initialBaseline){
+    function startDOMObserver(baseline){
         try{
             if(_observer) return;
             var selectors = ['#messages','.messages','.message-list','.messages-list','.chat-list','#chat-messages','.conversation'];
@@ -329,10 +372,8 @@
                                     var isPartner = !(node.classList.contains('me') || node.classList.contains('from-me') || node.className.indexOf('user') !== -1);
                                     if(isPartner){
                                         var synthetic = { id: Date.now(), text: text, timestamp: new Date().toISOString(), type:'normal', sender: 'partner' };
-                                        if(_shouldProcessMessage(synthetic, initialBaseline)){
-                                            log('DOM observer sees new partner-like node');
-                                            maybePromptOnPartnerMessage(synthetic, initialBaseline);
-                                        } else _markProcessed(synthetic);
+                                        if(_shouldProcessMessage(synthetic, baseline)) maybePromptOnPartnerMessage(synthetic, baseline);
+                                        else _markProcessed(synthetic);
                                     } else {
                                         _lastUserSent = { id: Date.now(), text: text, timestamp: new Date().toISOString(), sender: 'user', type: 'normal' };
                                         log('captured lastUserSent from DOM node', _lastUserSent);
@@ -342,7 +383,7 @@
                             } else {
                                 if(sender !== 'user' && sender !== 'me'){
                                     var synthetic2 = { id: Date.now(), text: node.innerText||'', timestamp: new Date().toISOString(), type:'normal', sender: sender };
-                                    if(_shouldProcessMessage(synthetic2, initialBaseline)) maybePromptOnPartnerMessage(synthetic2, initialBaseline);
+                                    if(_shouldProcessMessage(synthetic2, baseline)) maybePromptOnPartnerMessage(synthetic2, baseline);
                                     else _markProcessed(synthetic2);
                                 } else {
                                     _lastUserSent = { id: Date.now(), text: node.innerText||'', timestamp: new Date().toISOString(), sender: 'user', type: 'normal' };
@@ -359,16 +400,15 @@
     }
     function stopDOMObserver(){ try{ if(_observer){ _observer.disconnect(); _observer=null; log('stopped DOM observer'); } }catch(e){} }
 
-    // Wait until window.messages stabilizes (length unchanged for a short period), then install hooks using baseline snapshot.
+    // Wait until messages are stable (no changes) for a short window, then install hooks using baseline.
     function waitForMessagesStableAndInstall(){
         var tries = 0;
-        var maxTries = 18;
+        var maxTries = 30;
         var lastLen = Array.isArray(window.messages) ? window.messages.length : 0;
         var lastTimestamp = 0;
         if(Array.isArray(window.messages) && window.messages.length){
             var lastMsg = window.messages[window.messages.length - 1];
             if(lastMsg && lastMsg.timestamp) lastTimestamp = (new Date(lastMsg.timestamp)).getTime() || 0;
-            // mark existing ids so we don't prompt for them
             window.messages.forEach(function(m){ if(m && m.id !== undefined) _processedIds.add(m.id); });
         }
         var stableCount = 0;
@@ -387,101 +427,54 @@
                 lastLen = curLen;
                 lastTimestamp = curLastTs;
             }
-            // consider stable when unchanged for 3 consecutive ticks (~900ms)
+            // require stability for ~1.2s (3 ticks at 400ms)
             if(stableCount >= 3 || tries >= maxTries){
                 clearInterval(iv);
-                var baseline = { lastLen: lastLen, lastTimestamp: lastTimestamp };
-                log('messages baseline established', baseline);
-                installAllHooks(baseline);
+                _messagesBaseline = { lastLen: lastLen, lastTimestamp: lastTimestamp || _installMark };
+                _allowPromptsAt = Date.now() + _startupCooldownMs; // extra grace
+                log('messages baseline established', _messagesBaseline, 'prompts allowed after', new Date(_allowPromptsAt));
+                installAllHooks(_messagesBaseline);
             }
-        }, 300);
+        }, 400);
     }
 
-    // central installer (uses baseline to avoid re-prompting on reload)
     function installAllHooks(initialBaseline){
         if(state.installed) return;
         state.installed = true;
         log('installAllHooks start', initialBaseline);
-        installAddMessageHook(initialBaseline);
-        tryWrapSendMessage();
-        startMessagesPoll(initialBaseline);
-        startDOMObserver(initialBaseline);
+        try{ installAddMessageHook(initialBaseline); }catch(e){ warn(e); }
+        try{ tryWrapSendMessage(); }catch(e){}
+        try{ startMessagesPoll(initialBaseline); }catch(e){}
+        try{ startDOMObserver(initialBaseline); }catch(e){}
         document.addEventListener('DOMContentLoaded', function(){ renderPartnerWordCards(); });
-        // render once now if container exists
         setTimeout(renderPartnerWordCards, 500);
         log('installAllHooks done');
     }
 
-    // small wrappers reused
-    function installAddMessageHook(initialBaseline){
-        try{
-            if(typeof window.addMessage === 'function' && !window.__pcp_addMessageHooked){
-                var orig = window.addMessage;
-                window.addMessage = function(msg){
-                    try{ var res = orig.apply(this, arguments); }catch(e){ try{ orig(msg); }catch(ee){} }
-                    try{
-                        if(msg && (msg.sender === 'user' || msg.sender === 'me' || msg.role === 'user')){
-                            _lastUserSent = { id: msg.id !== undefined ? msg.id : Date.now(), text: msg.text || '', timestamp: msg.timestamp || new Date().toISOString(), sender: 'user', type: msg.type || 'normal' };
-                            log('captured lastUserSent from addMessage', _lastUserSent);
-                        }
-                        if(msg && msg.sender && msg.sender !== 'user'){
-                            if(_shouldProcessMessage(msg, initialBaseline)){
-                                log('addMessage hook detected partner msg', msg);
-                                maybePromptOnPartnerMessage(msg, initialBaseline);
-                            } else {
-                                _markProcessed(msg);
-                            }
-                        }
-                    }catch(e){}
-                    return;
-                };
-                window.__pcp_addMessageHooked = true;
-                log('installed addMessage hook');
-            }
-        }catch(e){ warn('addMessage hook install failed', e); }
-    }
-
-    function tryWrapSendMessage(){
-        try{
-            if(typeof window.sendMessage === 'function' && !window.__pcp_sendMessageWrapped){
-                var origSend = window.sendMessage;
-                window.sendMessage = function(){
-                    try{
-                        var a0 = arguments[0];
-                        if(typeof a0 === 'string'){
-                            _lastUserSent = { id: Date.now(), text: a0, timestamp: new Date().toISOString(), sender: 'user', type: 'normal' };
-                        } else if(a0 && typeof a0 === 'object' && (a0.text || a0.message)){
-                            var txt = a0.text || a0.message || '';
-                            _lastUserSent = { id: a0.id !== undefined ? a0.id : Date.now(), text: txt, timestamp: a0.timestamp || new Date().toISOString(), sender: 'user', type: a0.type || 'normal' };
-                        } else {
-                            try{
-                                var inp = document.getElementById('message-input') || document.querySelector('textarea, input');
-                                if(inp && inp.value) _lastUserSent = { id: Date.now(), text: inp.value, timestamp: new Date().toISOString(), sender: 'user', type: 'normal' };
-                            }catch(e){}
-                        }
-                        if(_lastUserSent) log('captured lastUserSent from sendMessage', _lastUserSent);
-                    }catch(e){}
-                    return origSend.apply(this, arguments);
-                };
-                window.__pcp_sendMessageWrapped = true;
-                log('wrapped sendMessage to capture lastUserSent');
-            }
-        }catch(e){ warn('wrap sendMessage failed', e); }
-    }
-
-    // expose API
+    // API
     window.PartnerCardPrompt = window.PartnerCardPrompt || {
         setChance: function(p){ state.chance = Math.max(0, Math.min(1, Number(p) || 0)); log('chance set to', state.chance); },
         getChance: function(){ return state.chance; },
         enable: function(){ state.enabled = true; },
         disable: function(){ state.enabled = false; },
-        forcePromptFor: function(partnerMsg){ log('forcePromptFor', partnerMsg); maybePromptOnPartnerMessage(partnerMsg, { lastLen: (Array.isArray(window.messages)?window.messages.length:0), lastTimestamp: _installMark }); },
+        // force option: { force: true } will bypass processed/timestamp checks
+        forcePromptFor: function(partnerMsg, opts){
+            try{
+                if(opts && opts.force){
+                    log('forcePromptFor forced', partnerMsg);
+                    showPartnerAddPopup(partnerMsg, findRelevantUserMessage(partnerMsg) || _lastUserSent);
+                    return;
+                }
+                log('forcePromptFor called', partnerMsg);
+                maybePromptOnPartnerMessage(partnerMsg, _messagesBaseline);
+            }catch(e){ warn(e); }
+        },
         addCard: addPartnerWordcard,
         renderCards: function(){ renderPartnerWordCards(); },
-        _debug: { installAllHooks: installAllHooks, setProcessed: function(ids){ ids && ids.forEach(function(i){ _processedIds.add(i); }); }, lastUser: function(){ return _lastUserSent; } }
+        _debug: { installAllHooks: installAllHooks, baseline: function(){ return _messagesBaseline; }, lastUser: function(){ return _lastUserSent; }, setAllowPromptsAt: function(ts){ _allowPromptsAt = ts; } }
     };
 
-    // Start: wait for messages to settle to avoid prompts during initial load
+    // Start
     try{ waitForMessagesStableAndInstall(); }catch(e){ warn('auto install failed', e); installAllHooks({ lastLen: (Array.isArray(window.messages)?window.messages.length:0), lastTimestamp: _installMark }); }
 
 })();
