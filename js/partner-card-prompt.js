@@ -55,36 +55,43 @@
       // Accept handler: add to customReplies (主字卡)
      document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // ensure global fallbacks
+          // ensure globals exist
           window._customReplies = window._customReplies || [];
           window.customReplies = window.customReplies || window._customReplies;
       
           const normalized = chosen.text.trim();
       
-          // check duplicates across possible arrays
-          const existsInWindow = Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized);
-          const existsInModule = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) && customReplies.some(r => String(r||'').trim() === normalized);
+          const winArr = Array.isArray(window.customReplies) ? window.customReplies : null;
+          const modArr = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies : null;
       
-          if (existsInWindow || existsInModule) {
+          // check duplicates across both arrays
+          const existsInWin = winArr && winArr.some(r => String(r||'').trim() === normalized);
+          const existsInMod = modArr && modArr.some(r => String(r||'').trim() === normalized);
+          if (existsInWin || existsInMod) {
             if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
             close();
             return;
           }
       
-          // update in-memory lists
-          if (Array.isArray(window.customReplies)) window.customReplies.unshift(normalized);
+          // add to window array
+          if (winArr) {
+            winArr.unshift(normalized);
+          } else {
+            window.customReplies = [normalized];
+          }
+          // update fallback pointer
           window._customReplies = window.customReplies;
       
-          if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
-            try { customReplies.unshift(normalized); } catch (e) { /* ignore */ }
+          // add to module-scoped array only if it's a different array reference
+          if (modArr && modArr !== winArr) {
+            modArr.unshift(normalized);
           }
       
-          // persist: prefer saveData (it writes the canonical module variables),
-          // otherwise fall back to writing directly to localforage using getStorageKey.
+          // persist (prefer canonical saveData if available)
           (async function persist() {
             try {
               if (typeof saveData === 'function') {
-                // If module-scoped customReplies doesn't exist, ensure saveData will at least see window._customReplies
+                // ensure saveData sees the new data
                 if (typeof customReplies === 'undefined') window._customReplies = window.customReplies;
                 await saveData();
               } else if (typeof getStorageKey === 'function' && window.localforage) {
@@ -96,24 +103,19 @@
                     await localforage.setItem(key, existing);
                   }
                 } catch (e) {
-                  // fallback single write
                   try { await localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch (err) {}
                 }
               } else if (window.localforage) {
-                // as last resort try to write to a sensible key if getStorageKey isn't available
                 try { await localforage.setItem('customReplies', window.customReplies); } catch (e) {}
               }
-            } catch (e) {
-              console.warn('persist customReplies failed', e);
-            }
+            } catch (e) { console.warn('persist customReplies failed', e); }
           })();
       
-          // refresh UI if possible
+          // refresh UI
           if (typeof renderReplyLibrary === 'function') {
-            try { renderReplyLibrary(); } catch (e) { /* ignore */ }
+            try { renderReplyLibrary(); } catch (e) {}
           }
           if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
-      
         } catch (e) {
           console.warn('[offer-accept] error', e);
           if (typeof showNotification === 'function') showNotification('添加主字卡失败', 'error', 2000);
@@ -121,6 +123,7 @@
           close();
         }
       });
+      
       document.getElementById('offer-reject-btn').addEventListener('click', function(){
         close();
         if (typeof showNotification === 'function') showNotification('已拒绝该请求', 'info', 1200);
