@@ -55,26 +55,36 @@
       // Accept handler: add to customReplies (主字卡)
       document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // Ensure we use the repo/global variable; fall back to window._customReplies
-          if (typeof customReplies === 'undefined' && typeof window._customReplies !== 'undefined') window.customReplies = window._customReplies || [];
-          if (typeof window.customReplies === 'undefined') window.customReplies = [];
-
-          // Avoid exact duplicates
+          // Ensure window._customReplies fallback exists
+          if (typeof customReplies === 'undefined' && typeof window._customReplies !== 'undefined') window._customReplies = window._customReplies || [];
+          if (typeof window.customReplies === 'undefined') window.customReplies = window._customReplies || [];
+      
+          // Normalize text
           const normalized = chosen.text.trim();
-          const exists = window.customReplies.some(r => String(r||'').trim() === normalized);
-          if (!exists) {
-            // add to front so it's easy to find
-            window.customReplies.unshift(normalized);
+      
+          // Check duplicates in both possible arrays (module-scoped and window)
+          const existsInWindow = Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized);
+          const existsInModule = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) && customReplies.some(r => String(r||'').trim() === normalized);
+      
+          if (!existsInWindow && !existsInModule) {
+            // add to front so it's easy to find (window)
+            if (Array.isArray(window.customReplies)) window.customReplies.unshift(normalized);
+            // also update module-scoped customReplies so other code reading that variable sees the change
+            if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
+              try { customReplies.unshift(normalized); } catch(e) { /* ignore */ }
+            }
+      
             // persist
             try {
               if (typeof saveData === 'function') {
-                // saveData will write customReplies into localforage via existing save mechanism
+                // saveData will write customReplies into storage via existing mechanism
                 saveData();
               } else {
                 // fallback: persist minimal way
                 try { localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch(e) {}
               }
             } catch(e) { console.warn('保存自定义回复失败：', e); }
+      
             // trigger UI refresh if available
             if (typeof renderReplyLibrary === 'function') {
               try { renderReplyLibrary(); } catch(e) { /* ignore */ }
