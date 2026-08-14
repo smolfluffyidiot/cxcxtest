@@ -10,7 +10,7 @@
     var APP_PREFIX = window.APP_PREFIX || '';
     var STORAGE_KEY = APP_PREFIX + 'partner_wordcards_v1';
     var POPUP_ID = 'partner-add-card-popup-v3';
-    var DEFAULT_CHANCE = 0.12;
+    var DEFAULT_CHANCE = 1;
 
     var state = { chance: DEFAULT_CHANCE, enabled: true, installed: false };
 
