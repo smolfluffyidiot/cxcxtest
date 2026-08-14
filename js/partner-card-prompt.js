@@ -55,67 +55,82 @@
       // Accept handler: add to customReplies (主字卡)
      document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // ensure globals exist
+          const normalized = chosen.text.trim();
+          // ensure fallbacks exist
           window._customReplies = window._customReplies || [];
           window.customReplies = window.customReplies || window._customReplies;
       
-          const normalized = chosen.text.trim();
+          // helper: dedupe preserving first occurrence order
+          function dedupePreserve(arr) {
+            const seen = new Set();
+            const out = [];
+            for (const it of arr) {
+              const k = String(it || '').trim();
+              if (!k) continue;
+              if (!seen.has(k)) { seen.add(k); out.push(it); }
+            }
+            return out;
+          }
       
-          const winArr = Array.isArray(window.customReplies) ? window.customReplies : null;
-          const modArr = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies : null;
+          // Pick canonical array: prefer module-scoped customReplies if it exists and is an array
+          const hasModuleArr = (typeof customReplies !== 'undefined' && Array.isArray(customReplies));
+          let canonical;
+          if (hasModuleArr) {
+            canonical = customReplies;
+          } else {
+            canonical = window.customReplies;
+          }
       
-          // check duplicates across both arrays
-          const existsInWin = winArr && winArr.some(r => String(r||'').trim() === normalized);
-          const existsInMod = modArr && modArr.some(r => String(r||'').trim() === normalized);
-          if (existsInWin || existsInMod) {
+          // If already present anywhere, bail
+          const already = (Array.isArray(canonical) && canonical.some(r => String(r||'').trim() === normalized))
+                       || (Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized));
+          if (already) {
             if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
             close();
             return;
           }
       
-          // add to window array
-          if (winArr) {
-            winArr.unshift(normalized);
+          // Insert once into canonical
+          if (!Array.isArray(canonical)) canonical = [];
+          canonical.unshift(normalized);
+      
+          // Build a single deduped list and apply it in-place to module array & window refs
+          const finalList = dedupePreserve(canonical);
+      
+          // Apply to module-scoped array in-place if it exists
+          if (hasModuleArr && Array.isArray(customReplies)) {
+            customReplies.splice(0, customReplies.length, ...finalList);
+            // make window point to same array object for consistency
+            window.customReplies = customReplies;
+            window._customReplies = customReplies;
           } else {
-            window.customReplies = [normalized];
-          }
-          // update fallback pointer
-          window._customReplies = window.customReplies;
-      
-          // add to module-scoped array only if it's a different array reference
-          if (modArr && modArr !== winArr) {
-            modArr.unshift(normalized);
+            // No module array: update window arrays
+            window.customReplies.splice(0, window.customReplies.length, ...finalList);
+            window._customReplies = window.customReplies;
           }
       
-          // persist (prefer canonical saveData if available)
+          // persist: prefer canonical saveData
           (async function persist() {
             try {
               if (typeof saveData === 'function') {
-                // ensure saveData sees the new data
-                if (typeof customReplies === 'undefined') window._customReplies = window.customReplies;
                 await saveData();
               } else if (typeof getStorageKey === 'function' && window.localforage) {
                 const key = getStorageKey('customReplies');
-                try {
-                  const existing = (await localforage.getItem(key)) || [];
-                  if (!existing.some(r => String(r||'').trim() === normalized)) {
-                    existing.unshift(normalized);
-                    await localforage.setItem(key, existing);
-                  }
-                } catch (e) {
-                  try { await localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch (err) {}
-                }
+                await localforage.setItem(key, window.customReplies);
               } else if (window.localforage) {
-                try { await localforage.setItem('customReplies', window.customReplies); } catch (e) {}
+                await localforage.setItem('customReplies', window.customReplies);
               }
-            } catch (e) { console.warn('persist customReplies failed', e); }
+            } catch (e) {
+              console.warn('persist customReplies failed', e);
+            }
           })();
       
           // refresh UI
           if (typeof renderReplyLibrary === 'function') {
-            try { renderReplyLibrary(); } catch (e) {}
+            try { renderReplyLibrary(); } catch (e) { /* ignore */ }
           }
           if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
+      
         } catch (e) {
           console.warn('[offer-accept] error', e);
           if (typeof showNotification === 'function') showNotification('添加主字卡失败', 'error', 2000);
