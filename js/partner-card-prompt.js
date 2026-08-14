@@ -5,74 +5,74 @@
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // fallback pending persistence
-  function persistCustomRepliesSoon() {
-    try { if (typeof saveData === 'function') saveData(); } catch(e){}
-    try { localStorage.setItem('_pending_custom_replies', JSON.stringify(window.customReplies || window._customReplies || customReplies || [])); } catch(e){}
+  // Persist helper (best-effort)
+  function persistCustomRepliesNow(arr) {
+    try {
+      // call app save hook first if available
+      if (typeof saveData === 'function') {
+        try { saveData(); } catch(e){ /* ignore */ }
+      }
+    } catch(e){}
+    try {
+      // session-scoped storage when available
+      if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined' && typeof SESSION_ID !== 'undefined' && SESSION_ID) {
+        try { localforage.setItem(getStorageKey('customReplies'), arr).catch(()=>{}); } catch(e){}
+      }
+    } catch(e){}
+    try {
+      // always keep a pending backup
+      localStorage.setItem('_pending_custom_replies', JSON.stringify(arr));
+    } catch(e){}
+    // mirror
+    try { window._customReplies = arr; } catch(e){}
   }
 
-  // robust add -> fetch, modify, persist
-  async function addMessageToCustomReplies(text) {
-    const normalized = String(text || '').trim();
-    if (!normalized) return { ok:false, reason:'empty' };
+  // Add normalized message into authoritative customReplies array and persist
+  function addToCustomReplies(normalized) {
+    if (!normalized || !String(normalized).trim()) return false;
+    normalized = String(normalized).trim();
 
-    // Attempt to load current list from most authoritative sources (prefer localforage session-scoped data)
-    let arr = null;
+    // Try to get the authoritative reference
+    var targetArr = null;
     try {
-      if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined' && typeof SESSION_ID !== 'undefined' && SESSION_ID) {
-        const stored = await localforage.getItem(getStorageKey('customReplies')).catch(()=>null);
-        if (Array.isArray(stored)) arr = stored.slice();
+      if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
+        targetArr = customReplies;
       }
-    } catch(e){ /* ignore */ }
+    } catch(e){}
 
-    // Fallback to runtime arrays
-    if (!Array.isArray(arr)) {
-      if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) arr = customReplies.slice();
-      else if (Array.isArray(window.customReplies)) arr = window.customReplies.slice();
-      else if (Array.isArray(window._customReplies)) arr = window._customReplies.slice();
+    if (!targetArr) {
+      if (Array.isArray(window.customReplies)) targetArr = window.customReplies;
+      else if (Array.isArray(window._customReplies)) targetArr = window._customReplies;
       else {
-        // fallback to pending localStorage (if present)
-        try {
-          const raw = localStorage.getItem('_pending_custom_replies');
-          const parsed = raw ? JSON.parse(raw) : null;
-          if (Array.isArray(parsed)) arr = parsed.slice();
-        } catch(e){}
+        // create a global array if none exists
+        try { customReplies = []; targetArr = customReplies; } catch(e){ targetArr = window.customReplies || window._customReplies || []; }
       }
     }
 
-    if (!Array.isArray(arr)) arr = [];
+    // ensure it's an array
+    if (!Array.isArray(targetArr)) {
+      try { targetArr = []; customReplies = targetArr; window.customReplies = targetArr; window._customReplies = targetArr; } catch(e){}
+    }
 
     // dedupe
-    if (arr.some(x => String(x||'').trim() === normalized)) return { ok:false, reason:'exists' };
+    var exists = targetArr.some(function(r){ return String(r||'').trim() === normalized; });
+    if (exists) return false;
 
-    // insert at front
-    arr.unshift(normalized);
+    // prepend
+    targetArr.unshift(normalized);
 
-    // update runtime mirrors
-    try { window.customReplies = arr; } catch(e){}
-    try { window._customReplies = arr; } catch(e){}
-    try { customReplies = arr; } catch(e){} // may throw if customReplies is const in another scope; ignore
+    // mirror to common places
+    try { window.customReplies = targetArr; } catch(e){}
+    try { window._customReplies = targetArr; } catch(e){}
+    try { customReplies = targetArr; } catch(e){} // may throw if not writable; ignore
 
-    // persist to localforage if possible
-    try {
-      if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined' && typeof SESSION_ID !== 'undefined' && SESSION_ID) {
-        await localforage.setItem(getStorageKey('customReplies'), arr).catch(()=>{});
-      }
-    } catch(e){ /* ignore */ }
+    // persist
+    persistCustomRepliesNow(targetArr);
 
-    // call app save hook if present
-    try { if (typeof saveData === 'function') saveData(); } catch(e){}
-
-    // fallback persist for later flush
-    try { localStorage.setItem('_pending_custom_replies', JSON.stringify(arr)); } catch(e){}
-
-    // schedule final safety persist
-    try { persistCustomRepliesSoon(); } catch(e){}
-
-    // try to refresh UI
+    // refresh UI
     try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
 
-    return { ok:true };
+    return true;
   }
 
   // core: maybe show offer modal for adding one of user's previous messages
@@ -83,7 +83,7 @@
 
       if (!Array.isArray(window.messages) || window.messages.length === 0) return;
       const userMsgs = window.messages
-        .filter(m => m && (m.sender === 'user' || m.sender === 'me') && m.text && String(m.text).trim())
+        .filter(m => m && m.sender === 'user' && m.text && String(m.text).trim())
         .map(m => ({ id: m.id, text: String(m.text).trim() }));
       if (!userMsgs.length) return;
 
@@ -123,17 +123,13 @@
         if (typeof showNotification === 'function') showNotification('已拒绝该请求', 'info', 1200);
       });
 
-      document.getElementById('offer-accept-btn').addEventListener('click', async function(){
+      document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          const res = await addMessageToCustomReplies(chosen.text);
-          if (res.ok) {
+          const ok = addToCustomReplies(chosen.text);
+          if (ok) {
             if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
           } else {
-            if (res.reason === 'exists') {
-              if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
-            } else {
-              if (typeof showNotification === 'function') showNotification('添加主字卡失败', 'error', 2000);
-            }
+            if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中或添加失败', 'info', 1700);
           }
         } catch (e) {
           console.warn('[offer-accept] error', e);
@@ -192,7 +188,6 @@
               localforage.setItem(getStorageKey('customReplies'), parsed).catch(()=>{});
             }
             // also set runtime
-            try { customReplies = parsed; } catch(e){}
             window.customReplies = parsed;
             window._customReplies = parsed;
             try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
