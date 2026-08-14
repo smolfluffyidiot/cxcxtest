@@ -55,68 +55,67 @@
       // Accept handler: add to customReplies (主字卡)
      document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          const normalized = chosen.text.trim();
-          // ensure fallbacks exist
+          const normalized = String(chosen.text || '').trim();
+          if (!normalized) { close(); return; }
+      
+          // ensure fallback globals exist
           window._customReplies = window._customReplies || [];
+          // make window.customReplies the canonical array
           window.customReplies = window.customReplies || window._customReplies;
+          window._customReplies = window.customReplies;
       
-          // helper: dedupe preserving first occurrence order
-          function dedupePreserve(arr) {
-            const seen = new Set();
-            const out = [];
-            for (const it of arr) {
-              const k = String(it || '').trim();
-              if (!k) continue;
-              if (!seen.has(k)) { seen.add(k); out.push(it); }
+          // If module-scoped customReplies exists, point it to the same canonical array
+          try {
+            if (typeof customReplies !== 'undefined' && customReplies !== window.customReplies) {
+              // merge existing module-scoped entries into canonical (preserve order, avoid duplicates)
+              const merged = (window.customReplies.concat(customReplies)).map(r => String(r||'').trim()).filter(Boolean);
+              const seen = new Set();
+              const deduped = [];
+              for (const it of merged) {
+                if (!seen.has(it)) { seen.add(it); deduped.push(it); }
+              }
+              // mutate canonical in-place
+              window.customReplies.splice(0, window.customReplies.length, ...deduped);
+              // rebind module-scoped name to canonical
+              customReplies = window.customReplies;
             }
-            return out;
+          } catch (e) {
+            // ignore if module-scoped assignment isn't allowed in some environments
           }
       
-          // Pick canonical array: prefer module-scoped customReplies if it exists and is an array
-          const hasModuleArr = (typeof customReplies !== 'undefined' && Array.isArray(customReplies));
-          let canonical;
-          if (hasModuleArr) {
-            canonical = customReplies;
-          } else {
-            canonical = window.customReplies;
-          }
-      
-          // If already present anywhere, bail
-          const already = (Array.isArray(canonical) && canonical.some(r => String(r||'').trim() === normalized))
-                       || (Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized));
+          // if already present, bail
+          const already = Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized);
           if (already) {
             if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
             close();
             return;
           }
       
-          // Insert once into canonical
-          if (!Array.isArray(canonical)) canonical = [];
-          canonical.unshift(normalized);
+          // insert once at front
+          window.customReplies.unshift(normalized);
+          // ensure pointers
+          window._customReplies = window.customReplies;
+          try { if (typeof customReplies !== 'undefined') customReplies = window.customReplies; } catch (e) {}
       
-          // Build a single deduped list and apply it in-place to module array & window refs
-          const finalList = dedupePreserve(canonical);
+          // dedupe canonical in-place to be 100% sure
+          (function dedupeInPlace(arr) {
+            const seen = new Set();
+            const out = [];
+            for (const it of arr) {
+              const k = String(it || '').trim();
+              if (!k) continue;
+              if (!seen.has(k)) { seen.add(k); out.push(k); }
+            }
+            arr.splice(0, arr.length, ...out);
+          })(window.customReplies);
       
-          // Apply to module-scoped array in-place if it exists
-          if (hasModuleArr && Array.isArray(customReplies)) {
-            customReplies.splice(0, customReplies.length, ...finalList);
-            // make window point to same array object for consistency
-            window.customReplies = customReplies;
-            window._customReplies = customReplies;
-          } else {
-            // No module array: update window arrays
-            window.customReplies.splice(0, window.customReplies.length, ...finalList);
-            window._customReplies = window.customReplies;
-          }
-      
-          // persist: prefer canonical saveData
+          // persist (prefer canonical saveData)
           (async function persist() {
             try {
               if (typeof saveData === 'function') {
                 await saveData();
               } else if (typeof getStorageKey === 'function' && window.localforage) {
-                const key = getStorageKey('customReplies');
-                await localforage.setItem(key, window.customReplies);
+                await localforage.setItem(getStorageKey('customReplies'), window.customReplies);
               } else if (window.localforage) {
                 await localforage.setItem('customReplies', window.customReplies);
               }
@@ -127,7 +126,7 @@
       
           // refresh UI
           if (typeof renderReplyLibrary === 'function') {
-            try { renderReplyLibrary(); } catch (e) { /* ignore */ }
+            try { renderReplyLibrary(); } catch (e) {}
           }
           if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
       
