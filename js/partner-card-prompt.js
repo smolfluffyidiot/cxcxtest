@@ -18,9 +18,12 @@
     try {
       if (typeof SESSION_ID !== 'undefined' && SESSION_ID && typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
         try {
-          localforage.setItem(getStorageKey('customReplies'), window.customReplies).catch(()=>{});
+          // prefer using the actual customReplies var if present, fallback to window.customReplies
+          var toWrite = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies :
+                        (Array.isArray(window.customReplies) ? window.customReplies : (Array.isArray(window._customReplies) ? window._customReplies : []));
+          localforage.setItem(getStorageKey('customReplies'), toWrite).catch(()=>{});
           // also update _customReplies mirror
-          window._customReplies = window.customReplies;
+          window._customReplies = toWrite;
           return;
         } catch(e){}
       }
@@ -28,7 +31,9 @@
 
     // fallback: keep pending in localStorage and poll until SESSION_ID available
     try {
-      localStorage.setItem('_pending_custom_replies', JSON.stringify(window.customReplies || []));
+      var pending = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies :
+                    (Array.isArray(window.customReplies) ? window.customReplies : (Array.isArray(window._customReplies) ? window._customReplies : []));
+      localStorage.setItem('_pending_custom_replies', JSON.stringify(pending || []));
     } catch(e){}
 
     if (window._pendingCustomRepliesFlushInterval) return;
@@ -45,7 +50,10 @@
           try { if (typeof saveData === 'function') saveData(); } catch(e){}
           try {
             if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
-              localforage.setItem(getStorageKey('customReplies'), window.customReplies).catch(()=>{});
+              var toWrite = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies :
+                            (Array.isArray(window.customReplies) ? window.customReplies : (Array.isArray(window._customReplies) ? window._customReplies : []));
+              localforage.setItem(getStorageKey('customReplies'), toWrite).catch(()=>{});
+              window._customReplies = toWrite;
             }
           } catch(e){}
           try { localStorage.removeItem('_pending_custom_replies'); } catch(e){}
@@ -106,22 +114,54 @@
 
       document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // Ensure runtime arrays exist
-          if (typeof window.customReplies === 'undefined') window.customReplies = Array.isArray(window._customReplies) ? window._customReplies.slice() : [];
-          if (!Array.isArray(window.customReplies)) window.customReplies = [];
+          // Determine the authoritative array reference for custom replies.
+          // Prefer the actual variable `customReplies` if present (this is what core uses).
+          var targetArr;
+          if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
+            targetArr = customReplies;
+          } else if (Array.isArray(window.customReplies)) {
+            targetArr = window.customReplies;
+            // Also set a global variable named customReplies for compatibility
+            try { customReplies = window.customReplies; } catch(e) {}
+          } else if (Array.isArray(window._customReplies)) {
+            targetArr = window._customReplies;
+            try { customReplies = window._customReplies; } catch(e) {}
+          } else {
+            // create a top-level customReplies variable (global)
+            try { customReplies = []; targetArr = customReplies; } catch(e){ targetArr = []; }
+          }
 
           const normalized = chosen.text.trim();
           // Avoid exact duplicates
-          const exists = window.customReplies.some(r => String(r||'').trim() === normalized);
+          const exists = targetArr.some(r => String(r||'').trim() === normalized);
           if (!exists) {
             // add to front so partner will likely use it soon
-            window.customReplies.unshift(normalized);
-            // mirror used elsewhere
-            window._customReplies = window.customReplies;
-            // attempt to persist now and soon
+            targetArr.unshift(normalized);
+
+            // ensure mirrors updated
+            window.customReplies = targetArr;
+            window._customReplies = targetArr;
+
+            // persist immediately
+            try {
+              if (typeof saveData === 'function') {
+                saveData();
+              }
+            } catch(e) { console.warn('saveData failed after adding custom reply', e); }
+
+            // also write directly to localforage if possible (session-scoped)
+            try {
+              if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined' && typeof SESSION_ID !== 'undefined' && SESSION_ID) {
+                localforage.setItem(getStorageKey('customReplies'), targetArr).catch(()=>{});
+              }
+            } catch(e){}
+
+            // final safety: schedule flush/persist
             persistCustomRepliesSoon();
+
             // refresh UI if library renderer exists
             try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
+
             if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
           } else {
             if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
@@ -183,6 +223,7 @@
               localforage.setItem(getStorageKey('customReplies'), parsed).catch(()=>{});
             }
             // also set runtime
+            try { customReplies = parsed; } catch(e){}
             window.customReplies = parsed;
             window._customReplies = parsed;
             try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
