@@ -53,46 +53,67 @@
       }
 
       // Accept handler: add to customReplies (主字卡)
-      document.getElementById('offer-accept-btn').addEventListener('click', function(){
+     document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // Ensure window._customReplies fallback exists
-          if (typeof customReplies === 'undefined' && typeof window._customReplies !== 'undefined') window._customReplies = window._customReplies || [];
-          if (typeof window.customReplies === 'undefined') window.customReplies = window._customReplies || [];
+          // ensure global fallbacks
+          window._customReplies = window._customReplies || [];
+          window.customReplies = window.customReplies || window._customReplies;
       
-          // Normalize text
           const normalized = chosen.text.trim();
       
-          // Check duplicates in both possible arrays (module-scoped and window)
+          // check duplicates across possible arrays
           const existsInWindow = Array.isArray(window.customReplies) && window.customReplies.some(r => String(r||'').trim() === normalized);
           const existsInModule = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) && customReplies.some(r => String(r||'').trim() === normalized);
       
-          if (!existsInWindow && !existsInModule) {
-            // add to front so it's easy to find (window)
-            if (Array.isArray(window.customReplies)) window.customReplies.unshift(normalized);
-            // also update module-scoped customReplies so other code reading that variable sees the change
-            if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
-              try { customReplies.unshift(normalized); } catch(e) { /* ignore */ }
-            }
+          if (existsInWindow || existsInModule) {
+            if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
+            close();
+            return;
+          }
       
-            // persist
+          // update in-memory lists
+          if (Array.isArray(window.customReplies)) window.customReplies.unshift(normalized);
+          window._customReplies = window.customReplies;
+      
+          if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
+            try { customReplies.unshift(normalized); } catch (e) { /* ignore */ }
+          }
+      
+          // persist: prefer saveData (it writes the canonical module variables),
+          // otherwise fall back to writing directly to localforage using getStorageKey.
+          (async function persist() {
             try {
               if (typeof saveData === 'function') {
-                // saveData will write customReplies into storage via existing mechanism
-                saveData();
-              } else {
-                // fallback: persist minimal way
-                try { localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch(e) {}
+                // If module-scoped customReplies doesn't exist, ensure saveData will at least see window._customReplies
+                if (typeof customReplies === 'undefined') window._customReplies = window.customReplies;
+                await saveData();
+              } else if (typeof getStorageKey === 'function' && window.localforage) {
+                const key = getStorageKey('customReplies');
+                try {
+                  const existing = (await localforage.getItem(key)) || [];
+                  if (!existing.some(r => String(r||'').trim() === normalized)) {
+                    existing.unshift(normalized);
+                    await localforage.setItem(key, existing);
+                  }
+                } catch (e) {
+                  // fallback single write
+                  try { await localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch (err) {}
+                }
+              } else if (window.localforage) {
+                // as last resort try to write to a sensible key if getStorageKey isn't available
+                try { await localforage.setItem('customReplies', window.customReplies); } catch (e) {}
               }
-            } catch(e) { console.warn('保存自定义回复失败：', e); }
-      
-            // trigger UI refresh if available
-            if (typeof renderReplyLibrary === 'function') {
-              try { renderReplyLibrary(); } catch(e) { /* ignore */ }
+            } catch (e) {
+              console.warn('persist customReplies failed', e);
             }
-            if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
-          } else {
-            if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
+          })();
+      
+          // refresh UI if possible
+          if (typeof renderReplyLibrary === 'function') {
+            try { renderReplyLibrary(); } catch (e) { /* ignore */ }
           }
+          if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
+      
         } catch (e) {
           console.warn('[offer-accept] error', e);
           if (typeof showNotification === 'function') showNotification('添加主字卡失败', 'error', 2000);
@@ -100,7 +121,6 @@
           close();
         }
       });
-
       document.getElementById('offer-reject-btn').addEventListener('click', function(){
         close();
         if (typeof showNotification === 'function') showNotification('已拒绝该请求', 'info', 1200);
