@@ -1,84 +1,35 @@
 (function(){
+  // Config: probability that the partner will ask to add one of your messages
+  // e.g. 0.08 = 8% chance after each simulateReply() run
   const OFFER_PROBABILITY_DEFAULT = 1;
 
-  function _escHtml(s){
+  function _escHtml(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // robust persistence helper: tries saveData(), then localforage with session key; if SESSION_ID missing,
-  // schedules a poll to flush later. Also keeps a localStorage pending backup as last resort.
-  function persistCustomRepliesSoon() {
-    try {
-      if (typeof saveData === 'function') {
-        try { saveData(); } catch(e){ /* saveData may return early if SESSION_ID not ready */ }
-      }
-    } catch(e){}
-
-    // If SESSION_ID exists try to write session-keyed storage directly
-    try {
-      if (typeof SESSION_ID !== 'undefined' && SESSION_ID && typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
-        try {
-          localforage.setItem(getStorageKey('customReplies'), window.customReplies).catch(()=>{});
-          // also update _customReplies mirror
-          window._customReplies = window.customReplies;
-          return;
-        } catch(e){}
-      }
-    } catch(e){}
-
-    // fallback: keep pending in localStorage and poll until SESSION_ID available
-    try {
-      localStorage.setItem('_pending_custom_replies', JSON.stringify(window.customReplies || []));
-    } catch(e){}
-
-    if (window._pendingCustomRepliesFlushInterval) return;
-    let tries = 0;
-    window._pendingCustomRepliesFlushInterval = setInterval(function(){
-      tries++;
-      try {
-        if (typeof SESSION_ID !== 'undefined' && SESSION_ID) {
-          // flush pending
-          if (window._pendingCustomRepliesFlushInterval) {
-            clearInterval(window._pendingCustomRepliesFlushInterval);
-            window._pendingCustomRepliesFlushInterval = null;
-          }
-          try { if (typeof saveData === 'function') saveData(); } catch(e){}
-          try {
-            if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
-              localforage.setItem(getStorageKey('customReplies'), window.customReplies).catch(()=>{});
-            }
-          } catch(e){}
-          try { localStorage.removeItem('_pending_custom_replies'); } catch(e){}
-        } else if (tries > 40) { // give up after ~20s
-          if (window._pendingCustomRepliesFlushInterval) { clearInterval(window._pendingCustomRepliesFlushInterval); window._pendingCustomRepliesFlushInterval = null; }
-        }
-      } catch(e){}
-    }, 500);
-  }
-
-  // core: maybe show offer modal for adding one of user's previous messages
+  // Core function: choose a random user message and show the offer modal
   window._maybeOfferAddToReplyCard = function(probability) {
     try {
       const p = (typeof probability === 'number') ? probability : OFFER_PROBABILITY_DEFAULT;
-      if (Math.random() >= p) return;
+      if (Math.random() >= p) return; // not chosen this time
 
-      if (!Array.isArray(window.messages) || window.messages.length === 0) return;
-      const userMsgs = window.messages
-        .filter(m => m && m.sender === 'user' && m.text && String(m.text).trim())
-        .map(m => ({ id: m.id, text: String(m.text).trim() }));
+      if (typeof messages === 'undefined' || !Array.isArray(messages) || messages.length === 0) return;
+      // pick from any user-sent text messages
+      const userMsgs = messages.filter(m => m && m.sender === 'user' && m.text && String(m.text).trim()).map(m => ({ id: m.id, text: String(m.text).trim() }));
       if (!userMsgs.length) return;
 
-      const pool = userMsgs.slice(-120);
+      // choose a random one (prefer recent)
+      const pool = userMsgs.slice(-120); // limit to last 120 for performance
       const chosen = pool[Math.floor(Math.random() * pool.length)];
       if (!chosen || !chosen.text) return;
 
-      if (document.getElementById('offer-add-reply-modal')) return;
-
+      // Build modal
+      if (document.getElementById('offer-add-reply-modal')) return; // avoid duplicates
       const overlay = document.createElement('div');
       overlay.id = 'offer-add-reply-modal';
       overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:20px;';
       const inner = document.createElement('div');
-      inner.style.cssText = 'width:min(480px,96vw);background:var(--secondary-bg);border-radius:12px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,0.28);border:1px solid var(--border-color);font-family:var(--font-family);';
+      inner.style.cssText = 'width:min(420px,96vw);background:var(--secondary-bg);border-radius:12px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,0.28);border:1px solid var(--border-color);font-family:var(--font-family);';
       inner.innerHTML = ''
         + '<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px;">'
         +   '<div style="width:44px;height:44px;border-radius:8px;background:linear-gradient(135deg,var(--accent-color),rgba(var(--accent-color-rgb),0.9));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;">对方</div>'
@@ -97,31 +48,37 @@
       overlay.appendChild(inner);
       document.body.appendChild(overlay);
 
-      function close() { try { overlay.remove(); } catch(e){} }
+      function close() {
+        try { overlay.remove(); } catch(e) {}
+      }
 
-      document.getElementById('offer-reject-btn').addEventListener('click', function(){
-        close();
-        if (typeof showNotification === 'function') showNotification('已拒绝该请求', 'info', 1200);
-      });
-
+      // Accept handler: add to customReplies (主字卡)
       document.getElementById('offer-accept-btn').addEventListener('click', function(){
         try {
-          // Ensure runtime arrays exist
-          if (typeof window.customReplies === 'undefined') window.customReplies = Array.isArray(window._customReplies) ? window._customReplies.slice() : [];
-          if (!Array.isArray(window.customReplies)) window.customReplies = [];
+          // Ensure we use the repo/global variable; fall back to window._customReplies
+          if (typeof customReplies === 'undefined' && typeof window._customReplies !== 'undefined') window.customReplies = window._customReplies || [];
+          if (typeof window.customReplies === 'undefined') window.customReplies = [];
 
-          const normalized = chosen.text.trim();
           // Avoid exact duplicates
+          const normalized = chosen.text.trim();
           const exists = window.customReplies.some(r => String(r||'').trim() === normalized);
           if (!exists) {
-            // add to front so partner will likely use it soon
+            // add to front so it's easy to find
             window.customReplies.unshift(normalized);
-            // mirror used elsewhere
-            window._customReplies = window.customReplies;
-            // attempt to persist now and soon
-            persistCustomRepliesSoon();
-            // refresh UI if library renderer exists
-            try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
+            // persist
+            try {
+              if (typeof saveData === 'function') {
+                // saveData will write customReplies into localforage via existing save mechanism
+                saveData();
+              } else {
+                // fallback: persist minimal way
+                try { localforage.setItem(getStorageKey('customReplies'), window.customReplies); } catch(e) {}
+              }
+            } catch(e) { console.warn('保存自定义回复失败：', e); }
+            // trigger UI refresh if available
+            if (typeof renderReplyLibrary === 'function') {
+              try { renderReplyLibrary(); } catch(e) { /* ignore */ }
+            }
             if (typeof showNotification === 'function') showNotification('已添加到「主字卡」 ✓', 'success', 2000);
           } else {
             if (typeof showNotification === 'function') showNotification('该条消息已存在于主字卡中', 'info', 1700);
@@ -134,18 +91,26 @@
         }
       });
 
+      document.getElementById('offer-reject-btn').addEventListener('click', function(){
+        close();
+        if (typeof showNotification === 'function') showNotification('已拒绝该请求', 'info', 1200);
+      });
+
+      // Click outside or ESC closes
       overlay.addEventListener('click', function(e){
-        if (e.target === overlay) close();
+        if (e.target === overlay) { close(); }
       });
       document.addEventListener('keydown', function onEsc(e){
         if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
       });
+
     } catch (err) {
       console.warn('[maybeOfferAddToReplyCard] error', err);
     }
   };
 
-  // patch simulateReply to call offer after partner replies (non-invasive)
+  // Non-invasive hook: patch simulateReply to trigger offer after it completes.
+  // This avoids editing the large simulateReply function directly.
   function _patchSimulateReplyOnce() {
     if (window._simulateReplyPatched) return;
     window._simulateReplyPatched = true;
@@ -154,10 +119,15 @@
     window.simulateReply = function() {
       const res = orig.apply(this, arguments);
       try {
+        // Wait a bit so messages have been rendered; then call offer function
         setTimeout(function(){
-          try { if (typeof window._maybeOfferAddToReplyCard === 'function') window._maybeOfferAddToReplyCard(OFFER_PROBABILITY_DEFAULT); } catch(e){}
+          try {
+            if (typeof window._maybeOfferAddToReplyCard === 'function') {
+              window._maybeOfferAddToReplyCard(OFFER_PROBABILITY_DEFAULT);
+            }
+          } catch(e) { console.warn('offer call failed', e); }
         }, 700);
-      } catch(e){}
+      } catch(e) {}
       return res;
     };
   }
@@ -167,38 +137,4 @@
   } else {
     document.addEventListener('DOMContentLoaded', _patchSimulateReplyOnce);
   }
-
-  // If there are pending custom replies left in localStorage from earlier fallback, restore them into session store when ready
-  (function flushPendingOnReady(){
-    try {
-      const raw = localStorage.getItem('_pending_custom_replies');
-      if (!raw) return;
-      let parsed = null;
-      try { parsed = JSON.parse(raw); } catch(e){}
-      if (!Array.isArray(parsed)) return;
-      const tryFlush = function(){
-        if (typeof SESSION_ID !== 'undefined' && SESSION_ID) {
-          try {
-            if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
-              localforage.setItem(getStorageKey('customReplies'), parsed).catch(()=>{});
-            }
-            // also set runtime
-            window.customReplies = parsed;
-            window._customReplies = parsed;
-            try { if (typeof renderReplyLibrary === 'function') renderReplyLibrary(); } catch(e){}
-            localStorage.removeItem('_pending_custom_replies');
-            return true;
-          } catch(e){}
-        }
-        return false;
-      };
-      if (!tryFlush()) {
-        const poll = setInterval(function(){
-          if (tryFlush()) { clearInterval(poll); }
-        }, 500);
-        setTimeout(function(){ clearInterval(poll); }, 20000);
-      }
-    } catch(e){}
-  })();
-
 })();
