@@ -8,7 +8,7 @@
     var PARTNER_STORAGE_KEY = APP_PREFIX + 'partner_wordcards_v1';
     var REPLY_STORAGE_KEY   = APP_PREFIX + 'custom_replies';
     var POPUP_ID = 'partner-add-card-popup-final';
-    var DEFAULT_CHANCE = 0.12;
+    var DEFAULT_CHANCE = 1;
 
     var state = { chance: DEFAULT_CHANCE, enabled: true, installed: false };
 
