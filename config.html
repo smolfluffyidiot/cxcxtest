@@ -1705,9 +1705,28 @@
                     <div class="settings-item" id="companion-diary-function">
                         <i class="fas fa-book"></i><span>陪伴日记</span>
                     </div>
-                    <div class="settings-item settings-item-disabled" id="coming-soon-placeholder">
-                        <i class="fas fa-hourglass-half"></i><span>敬请期待</span>
-                    </div>
+                    <div class="settings-item" id="open-draw-together" title="画布 · Draw Together" style="cursor:pointer;"
+                     onclick="(function(){
+                       try {
+                         if (!window.drawTogether || typeof window.drawTogether.newCanvas !== 'function') {
+                           alert('Draw Together 模块尚未加载，请确认已包含 js/draw-together.js');
+                           return;
+                         }
+                         const c = window.drawTogether.newCanvas({ title: '画布', owner: 'me', shared: false });
+                         if (c && typeof window.drawTogether.openCanvasModalById === 'function') {
+                           window.drawTogether.openCanvasModalById(c.id);
+                         } else if (typeof window.openCanvasModal === 'function') {
+                           window.openCanvasModal(c.id);
+                         } else {
+                           alert('已创建画布，但打开画布界面失败（缺少 openCanvasModal）');
+                         }
+                       } catch (e) {
+                         console.error('打开 Draw Together 失败', e);
+                         alert('打开 Draw Together 失败，查看控制台以获取详情');
+                       }
+                     })()">
+                  <i class="fas fa-paint-brush"></i><span>画布 · Draw Together</span>
+                </div>
                     <div class="settings-item" id="music-player-toggle" style="display:none;">
                         <i class="fas fa-music"></i><span>悬浮音乐播放器</span>
                     </div>
@@ -2718,5 +2737,6 @@
     <script src="js/features/companion-diary.js"></script>
     <script src="js/app.js"></script>
     <script src="js/partner-card-prompt.js"></script>
+    <script src="js/draw-together.js"></script>
 </body>
 </html>
