@@ -2090,17 +2090,14 @@
           <div style="display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid var(--border-color);">
             <div style="font-weight:600;">Draw Together · 画布</div>
             <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
-              <select id="canvas-permission-select" style="padding:6px;border-radius:8px;">
-                <option value="individual">Individual</option>
-                <option value="shared">Shared</option>
-              </select>
+              <!-- No permission dropdown: canvases are individual by default -->
               <button id="canvas-send-to-chat" class="modal-btn modal-btn-primary">Send to Chat</button>
               <button id="canvas-save-close" class="modal-btn modal-btn-secondary">Close</button>
             </div>
           </div>
     
           <div style="display:flex;gap:12px;padding:12px;">
-            <div id="canvas-toolbar" style="width:220px;flex-shrink:0;"></div>
+            <div id="canvas-toolbar" style="width:260px;flex-shrink:0;"></div>
     
             <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
               <div style="background:var(--primary-bg);border-radius:8px;padding:8px;display:flex;justify-content:center;align-items:center;">
