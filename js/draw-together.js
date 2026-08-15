@@ -260,7 +260,7 @@
           modal.style.display = 'none';
           const content = modal.querySelector('.modal-content');
           if (content) { content.style.opacity = '0'; content.style.transform = 'translateY(20px) scale(0.95)'; }
-        }
+        } 
         try { document.body.style.overflow = ''; } catch(e){}
         activeCanvas = null;
         saveCanvasesLocal(canvasesCache).catch(()=>{});
