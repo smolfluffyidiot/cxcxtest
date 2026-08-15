@@ -1,14 +1,7 @@
-/* Draw Together — full, defensive single-file implementation
-   - Individual canvases by default (owner: 'me')
-   - Tools: brush, eraser, line, rect, circle, polygon (user-controlled sides 3..12)
-   - Persisted structured actions (localforage if present, fallback localStorage)
-   - Send to chat: user messages include from:'me' and numeric createdAt (immutable snapshot)
-   - Partner simulation: background agent + follow-up after partner messages
-   - Runtime setters: setPartnerTickInterval, setPartnerDrawProb, setPartnerShareProb, setPartnerAfterSendProb, setPartnerForceShareOnFollowup
-   - Defensive: logs errors to window.__drawTogetherError and console
+/* js/draw-together.js
+   Fixed eraser rendering and robust send-to-chat snapshot format.
 */
 (function () {
-  // Top-level defensive wrapper
   try {
     if (window.__drawTogetherLoaded) {
       console.debug('[drawTogether] already loaded');
@@ -16,11 +9,11 @@
     }
     console.debug('[drawTogether] initializing');
 
-    // --- Safe references and fallbacks ---
+    // Safe references
     const safe = {
-      hasLocalForage: !!(window.localforage && typeof window.localforage.getItem === 'function' && typeof window.localforage.setItem === 'function'),
-      showNotification: (typeof window.showNotification === 'function') ? window.showNotification : function (msg, type) { console.log('[notify]', type, msg); },
-      saveData: (typeof window.saveData === 'function') ? window.saveData : async function () { return Promise.resolve(); },
+      hasLocalForage: !!(window.localforage && typeof window.localforage.getItem === 'function'),
+      showNotification: (typeof window.showNotification === 'function') ? window.showNotification : (m, t) => console.log('[notify]', t, m),
+      saveData: (typeof window.saveData === 'function') ? window.saveData : async () => Promise.resolve(),
       addMessageFn: (typeof window.addMessage === 'function') ? window.addMessage : null,
       renderMessagesFn: (typeof window.renderMessages === 'function') ? window.renderMessages : null
     };
@@ -30,12 +23,10 @@
         window.__drawTogetherLoaded = false;
         window.__drawTogetherError = err && (err.stack || err.message) ? (err.stack || err.message) : String(err);
         console.error('[drawTogether] load error:', window.__drawTogetherError);
-      } catch (e) {
-        console.error('[drawTogether] setLoadError failed', e);
-      }
+      } catch (e) { console.error('[drawTogether] setLoadError failed', e); }
     }
 
-    // --- Config ---
+    // Config
     const STORAGE_KEY = (typeof getStorageKey === 'function' && typeof APP_PREFIX !== 'undefined')
       ? (function () { try { return getStorageKey('canvases'); } catch (e) { return APP_PREFIX + 'canvases'; } })()
       : (typeof APP_PREFIX !== 'undefined' ? (APP_PREFIX + 'canvases') : 'cxcx_canvases_v1');
@@ -44,16 +35,16 @@
     const CANVAS_DEFAULT_H = 500;
     const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
 
-    // Partner agent defaults (tunable at runtime)
-    let PARTNER_TICK_INTERVAL = 10 * 60 * 1000; // 10 minutes
+    // Partner agent defaults (tunable)
+    let PARTNER_TICK_INTERVAL = 10 * 60 * 1000;
     let PARTNER_DRAW_PROB = 0.021;
     let PARTNER_SHARE_PROB = 1;
     let PARTNER_DRAW_AFTER_SEND_PROB = 1;
     let PARTNER_FORCE_SHARE_ON_FOLLOWUP = true;
 
-    // --- Utilities ---
+    // Utilities
     function uid(prefix = 'c') { return prefix + '-' + Math.random().toString(36).slice(2, 9) + '-' + Date.now().toString(36); }
-    function safeJSONParse(s) { try { return JSON.parse(s); } catch (e) { return null; } }
+    function safeJSONParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
     async function loadCanvasesLocal() {
       try {
@@ -80,58 +71,69 @@
 
     const throttledSave = (() => {
       if (typeof window.throttledSaveData === 'function') return window.throttledSaveData;
-      let t;
-      return function () { clearTimeout(t); t = setTimeout(() => { safe.saveData().catch(() => { }); }, 500); };
+      let t; return function () { clearTimeout(t); t = setTimeout(() => { safe.saveData().catch(() => {}); }, 500); };
     })();
 
-    // push message helper (tries addMessage then messages[])
     function pushChatMessage(msg) {
       if (!msg) return;
-      try {
-        if (safe.addMessageFn) { safe.addMessageFn(msg); return; }
-      } catch (e) { console.warn('[drawTogether] addMessage threw', e); }
+      try { if (safe.addMessageFn) { safe.addMessageFn(msg); return; } } catch (e) { console.warn('[drawTogether] addMessage threw', e); }
       try {
         if (Array.isArray(window.messages)) {
           window.messages.push(msg);
-          if (safe.renderMessagesFn) {
-            try { safe.renderMessagesFn(); } catch (e) { console.warn('[drawTogether] renderMessages threw', e); }
-          }
+          if (safe.renderMessagesFn) try { safe.renderMessagesFn(); } catch (e) { console.warn('[drawTogether] renderMessages threw', e); }
           throttledSave();
           return;
         }
-      } catch (e) { console.warn('[drawTogether] fallback push failed', e); }
+      } catch (e) { console.warn('[drawTogether] fallback push error', e); }
       console.warn('[drawTogether] cannot push message — integrate addMessage or window.messages');
     }
 
-    // --- Drawing primitives ---
-    function drawAction(ctx, action) {
+    // drawAction supports snapshotMode: when snapshotMode === true, eraser actions are rendered as white strokes
+    function drawAction(ctx, action, snapshotMode = false) {
       if (!ctx || !action) return;
       ctx.save();
       try {
         if (action.type === 'clear') { ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore(); return; }
+
         if (action.type === 'stroke') {
           const pts = Array.isArray(action.points) ? action.points : [];
           if (!pts.length) { ctx.restore(); return; }
           ctx.lineJoin = ctx.lineCap = 'round';
           ctx.lineWidth = action.width || 3;
-          ctx.strokeStyle = action.color || '#000';
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
+          if (action.tool === 'eraser') {
+            if (snapshotMode) {
+              // Render eraser as white stroke on snapshot so PNG shows erased areas against white background
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.strokeStyle = '#ffffff';
+            } else {
+              // Live erasing: remove pixels
+              ctx.globalCompositeOperation = 'destination-out';
+              ctx.strokeStyle = 'rgba(0,0,0,1)';
+            }
+          } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = action.color || '#000';
+          }
+          ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
           for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
           ctx.stroke(); ctx.closePath(); ctx.restore(); return;
         }
+
         if (action.type === 'shape') {
           const st = action.shapeType;
           ctx.lineWidth = action.width || 2;
           ctx.strokeStyle = action.color || '#000';
           ctx.fillStyle = action.fill || 'transparent';
+
           if (st === 'line') {
             ctx.beginPath(); ctx.moveTo(action.x1, action.y1); ctx.lineTo(action.x2, action.y2); ctx.stroke(); ctx.closePath();
           } else if (st === 'rect') {
             if (action.fill) ctx.fillRect(action.x, action.y, action.w, action.h);
             ctx.strokeRect(action.x, action.y, action.w, action.h);
           } else if (st === 'circle') {
-            ctx.beginPath(); ctx.arc(action.cx, action.cy, action.r, 0, Math.PI * 2); if (action.fill) ctx.fill(); ctx.stroke(); ctx.closePath();
+            ctx.beginPath(); ctx.arc(action.cx, action.cy, action.r, 0, Math.PI * 2);
+            if (action.fill) ctx.fill();
+            ctx.stroke(); ctx.closePath();
           } else if (st === 'polygon' && Array.isArray(action.points) && action.points.length) {
             const pts = action.points; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
             for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -139,9 +141,10 @@
           }
           ctx.restore(); return;
         }
+
         ctx.restore();
       } catch (e) {
-        try { ctx.restore(); } catch (_) { }
+        try { ctx.restore(); } catch (_) {}
         console.warn('[drawTogether] drawAction error', e, action);
       }
     }
@@ -151,7 +154,7 @@
         if (!canvasEl || !canvasEl.getContext) return;
         const ctx = canvasEl.getContext('2d');
         ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-        (actions || []).forEach(a => { try { drawAction(ctx, a); } catch (e) { console.warn('[drawTogether] action draw failed', e); } });
+        (actions || []).forEach(a => { try { drawAction(ctx, a, false); } catch (e) { console.warn('[drawTogether] action draw failed', e); } });
       } catch (e) { console.warn('[drawTogether] redraw failed', e); }
     }
 
@@ -161,7 +164,7 @@
       return (h >>> 0).toString(16);
     }
 
-    // --- Data model & caching ---
+    // state
     let canvasesCache = [];
     let activeCanvas = null;
 
@@ -185,14 +188,14 @@
         meta: opts.meta || {}
       };
       canvasesCache.unshift(obj);
-      saveCanvasesLocal(canvasesCache).catch(() => { });
+      saveCanvasesLocal(canvasesCache).catch(() => {});
       throttledSave();
       return obj;
     }
 
     function findCanvasById(id) { return canvasesCache.find(c => c.id === id); }
 
-    // --- Toolbar/Modal markup wiring ---
+    // toolbar builder
     function buildToolbar(container) {
       if (!container) return;
       container.innerHTML = `
@@ -251,15 +254,14 @@
         const modal = document.getElementById('canvas-modal');
         const canvasEl = document.getElementById('drawing-canvas');
         const toolbar = document.getElementById('canvas-toolbar');
-        if (!modal || !canvasEl || !toolbar) { console.warn('[drawTogether] Canvas modal elements missing'); safe.showNotification('Draw Together UI missing', 'error'); return; }
+        if (!modal || !canvasEl || !toolbar) { console.warn('[drawTogether] modal elements missing'); safe.showNotification('Draw Together UI missing', 'error'); return; }
 
         modal.style.zIndex = '999999';
         const content = modal.querySelector('.modal-content'); if (content) { content.style.opacity = '1'; content.style.transform = 'none'; }
 
-        if (typeof showModal === 'function') {
-          try { showModal(modal, modal.querySelector('.modal-content') || null); } catch (e) { modal.style.display = 'flex'; }
-        } else modal.style.display = 'flex';
-        try { document.body.style.overflow = 'hidden'; } catch (e) { }
+        if (typeof showModal === 'function') { try { showModal(modal, modal.querySelector('.modal-content') || null); } catch (e) { modal.style.display = 'flex'; } }
+        else modal.style.display = 'flex';
+        try { document.body.style.overflow = 'hidden'; } catch (e) {}
 
         if (!toolbar.dataset.built) {
           buildToolbar(toolbar);
@@ -291,15 +293,13 @@
     function closeCanvasModal() {
       const modal = document.getElementById('canvas-modal');
       if (!modal) return;
-      if (typeof hideModal === 'function') {
-        try { hideModal(modal); } catch (e) { modal.style.display = 'none'; }
-      } else modal.style.display = 'none';
-      try { document.body.style.overflow = ''; } catch (e) { }
+      if (typeof hideModal === 'function') { try { hideModal(modal); } catch (e) { modal.style.display = 'none'; } }
+      else modal.style.display = 'none';
+      try { document.body.style.overflow = ''; } catch (e) {}
       activeCanvas = null;
       saveCanvasesLocal(canvasesCache).catch(() => {});
     }
 
-    // --- Drawing interaction ---
     function initDrawingCanvas(canvasEl, canvasObj) {
       if (!canvasEl) return;
       canvasEl.width = CANVAS_DEFAULT_W;
@@ -323,6 +323,7 @@
       }
 
       const ctx = canvasEl.getContext('2d');
+
       function getPos(e) {
         const rect = canvasEl.getBoundingClientRect();
         if (e.touches && e.touches[0]) {
@@ -335,7 +336,7 @@
       function startDraw(e) {
         if (!canEdit(canvasObj)) { safe.showNotification('This canvas is locked or not editable', 'warning'); return; }
         drawing = true; currentPoints = []; startPoint = getPos(e); lastMovePoint = startPoint; currentPoints.push(startPoint);
-        try { e.preventDefault(); } catch (e) { }
+        try { e.preventDefault(); } catch (e) {}
       }
 
       function moveDraw(e) {
@@ -344,20 +345,20 @@
         const tool = (toolbar && toolbar.dataset.selectedTool) || 'brush';
 
         if (tool === 'brush' || tool === 'eraser') {
-          drawAction(ctx, { type: 'stroke', tool: tool === 'eraser' ? 'eraser' : 'brush', points: [currentPoints[currentPoints.length - 2], currentPoints[currentPoints.length - 1]], color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 });
+          drawAction(ctx, { type: 'stroke', tool: tool === 'eraser' ? 'eraser' : 'brush', points: [currentPoints[currentPoints.length - 2], currentPoints[currentPoints.length - 1]], color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 }, false);
         } else if (tool === 'poly') {
           redrawFromActions(canvasEl, (canvasObj.actions || []));
-          const dx = p.x - startPoint.x, dy = p.y - startPoint.y, r = Math.sqrt(dx * dx + dy * dy);
+          const dx = p.x - startPoint.x, dy = p.y - startPoint.y; const r = Math.sqrt(dx * dx + dy * dy);
           let sides = 5; if (polySidesInput) { const v = parseInt(polySidesInput.value, 10); if (!isNaN(v)) sides = Math.max(3, Math.min(12, v)); }
           const pts = makeRegularPolygonPoints(startPoint.x, startPoint.y, r, sides, 0);
-          drawAction(ctx, { type: 'shape', shapeType: 'polygon', points: pts, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4, fill: null });
+          drawAction(ctx, { type: 'shape', shapeType: 'polygon', points: pts, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4, fill: null }, false);
         } else {
           redrawFromActions(canvasEl, (canvasObj.actions || []));
-          if (tool === 'line') drawAction(ctx, { type: 'shape', shapeType: 'line', x1: startPoint.x, y1: startPoint.y, x2: p.x, y2: p.y, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 });
-          if (tool === 'rect') drawAction(ctx, { type: 'shape', shapeType: 'rect', x: Math.min(startPoint.x, p.x), y: Math.min(startPoint.y, p.y), w: Math.abs(p.x - startPoint.x), h: Math.abs(p.y - startPoint.y), color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 });
-          if (tool === 'circle') { const dx = p.x - startPoint.x, dy = p.y - startPoint.y, r = Math.sqrt(dx * dx + dy * dy); drawAction(ctx, { type: 'shape', shapeType: 'circle', cx: startPoint.x, cy: startPoint.y, r: r, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 }); }
+          if (tool === 'line') drawAction(ctx, { type: 'shape', shapeType: 'line', x1: startPoint.x, y1: startPoint.y, x2: p.x, y2: p.y, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 }, false);
+          if (tool === 'rect') drawAction(ctx, { type: 'shape', shapeType: 'rect', x: Math.min(startPoint.x, p.x), y: Math.min(startPoint.y, p.y), w: Math.abs(p.x - startPoint.x), h: Math.abs(p.y - startPoint.y), color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 }, false);
+          if (tool === 'circle') { const dx = p.x - startPoint.x, dy = p.y - startPoint.y, r = Math.sqrt(dx * dx + dy * dy); drawAction(ctx, { type: 'shape', shapeType: 'circle', cx: startPoint.x, cy: startPoint.y, r: r, color: colorInput ? colorInput.value : '#000', width: sizeInput ? parseInt(sizeInput.value, 10) : 4 }, false); }
         }
-        try { e.preventDefault(); } catch (e) { }
+        try { e.preventDefault(); } catch (e) {}
       }
 
       function endDraw(e) {
@@ -366,7 +367,7 @@
         const tool = (toolbar && toolbar.dataset.selectedTool) || 'brush';
         let action = null;
         if (tool === 'brush' || tool === 'eraser') {
-          action = { type: 'stroke', tool: tool, points: currentPoints.slice(), color: tool === 'eraser' ? '#000000' : (document.getElementById('canvas-color') ? document.getElementById('canvas-color').value : '#000'), width: document.getElementById('canvas-size') ? parseInt(document.getElementById('canvas-size').value, 10) : 4 };
+          action = { type: 'stroke', tool: tool === 'eraser' ? 'eraser' : 'brush', points: currentPoints.slice(), color: tool === 'eraser' ? null : (document.getElementById('canvas-color') ? document.getElementById('canvas-color').value : '#000'), width: document.getElementById('canvas-size') ? parseInt(document.getElementById('canvas-size').value, 10) : 4 };
         } else if (tool === 'poly') {
           const p = lastMovePoint || startPoint; const dx = p.x - startPoint.x, dy = p.y - startPoint.y, r = Math.sqrt(dx * dx + dy * dy);
           let sides = 5; if (polySidesInput) { const v = parseInt(polySidesInput.value, 10); if (!isNaN(v)) sides = Math.max(3, Math.min(12, v)); }
@@ -382,12 +383,12 @@
           canvasObj.actions.push(action);
           canvasObj.lastModifiedAt = Date.now();
           canvasObj.partnerEdited = false;
-          saveCanvasesLocal(canvasesCache).catch(() => { });
+          saveCanvasesLocal(canvasesCache).catch(() => {});
           throttledSave();
         }
         currentPoints = []; startPoint = null; lastMovePoint = null;
         redrawFromActions(canvasEl, canvasObj.actions || []);
-        try { e.preventDefault(); } catch (e) { }
+        try { e.preventDefault(); } catch (e) {}
       }
 
       canvasEl.onpointerdown = startDraw;
@@ -399,60 +400,48 @@
       canvasEl.onmousedown = startDraw;
       canvasEl.onmousemove = moveDraw;
       canvasEl.onmouseup = endDraw;
-
-      window.doUndo = function () {
-        if (!canvasObj || !canvasObj.actions || !canvasObj.actions.length) return;
-        canvasObj.actions.pop();
-        canvasObj.lastModifiedAt = Date.now();
-        saveCanvasesLocal(canvasesCache).catch(() => { });
-        redrawFromActions(canvasEl, canvasObj.actions || []);
-        throttledSave();
-      };
-
-      window.doClear = function () {
-        if (!canEdit(canvasObj)) { safe.showNotification('Cannot clear locked/expired canvas', 'warning'); return; }
-        canvasObj.actions.push({ type: 'clear' });
-        canvasObj.lastModifiedAt = Date.now();
-        saveCanvasesLocal(canvasesCache).catch(() => { });
-        redrawFromActions(canvasEl, canvasObj.actions || []);
-        throttledSave();
-      };
-
-      canvasObj.applyAction = function (action) {
-        canvasObj.actions.push(action);
-        canvasObj.lastModifiedAt = Date.now();
-        canvasObj.partnerEdited = true;
-        saveCanvasesLocal(canvasesCache).catch(() => { });
-        if (document.getElementById('canvas-modal') && document.getElementById('canvas-modal').style.display !== 'none' && activeCanvas && activeCanvas.id === canvasObj.id) {
-          redrawFromActions(canvasEl, canvasObj.actions || []);
-        }
-        throttledSave();
-      };
     }
 
-    // --- Send to chat (user) ---
+    // Send to chat: render actions to an offscreen canvas and render eraser as white strokes for the snapshot
     function sendCanvasToChat(canvasObj) {
       if (!canvasObj) return;
       const tmp = document.createElement('canvas'); tmp.width = CANVAS_DEFAULT_W; tmp.height = CANVAS_DEFAULT_H;
-      const ctx = tmp.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, tmp.width, tmp.height);
-      for (const a of canvasObj.actions) drawAction(ctx, a);
+      const ctx = tmp.getContext('2d');
+      // Background white
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, tmp.width, tmp.height);
+      // Render actions; when action.tool === 'eraser' we render as white strokes (snapshotMode=true)
+      for (const a of (canvasObj.actions || [])) {
+        drawAction(ctx, a, true);
+      }
       const dataURL = tmp.toDataURL('image/png');
       const hash = checksumSnapshotDataURL(dataURL);
       if (canvasObj.lastSentHash === hash) { safe.showNotification('No changes since last sent.', 'warning'); return; }
+
       const now = Date.now();
       const myName = (window.settings && window.settings.myName) ? window.settings.myName : (typeof window.MY_NAME !== 'undefined' ? window.MY_NAME : '我');
+
+      // Construct message that covers both app shapes: top-level image + canvasSnapshot content + from and createdAt
       const msg = {
         id: now + Math.floor(Math.random() * 1000),
         from: 'me',
         sender: myName,
         createdAt: now,
         timestamp: new Date(now),
-        type: 'image',
+        type: 'canvas-snapshot',
         text: '',
         image: dataURL,
         status: 'sent',
-        canvasSnapshot: { canvasId: canvasObj.id, structured: JSON.parse(JSON.stringify(canvasObj.actions)), width: CANVAS_DEFAULT_W, height: CANVAS_DEFAULT_H }
+        canvasSnapshot: { canvasId: canvasObj.id, structured: JSON.parse(JSON.stringify(canvasObj.actions || [])), width: CANVAS_DEFAULT_W, height: CANVAS_DEFAULT_H },
+        content: {
+          canvasId: canvasObj.id,
+          title: canvasObj.title || '',
+          snapshot: dataURL,
+          structured: JSON.parse(JSON.stringify(canvasObj.actions || [])),
+          width: CANVAS_DEFAULT_W,
+          height: CANVAS_DEFAULT_H
+        }
       };
+
       pushChatMessage(msg);
       canvasObj.lastSentHash = hash;
       saveCanvasesLocal(canvasesCache);
@@ -460,7 +449,15 @@
       safe.showNotification('Canvas sent to chat', 'success');
     }
 
-    // --- Partner generator (random) ---
+    // render helper for message code
+    window.renderCanvasMessageNode = function (msg) {
+      const wrapper = document.createElement('div'); wrapper.className = 'canvas-msg';
+      const img = document.createElement('img'); img.src = (msg && (msg.image || (msg.content && msg.content.snapshot))) || '';
+      img.style.maxWidth = '320px'; img.style.borderRadius = '8px'; img.style.boxShadow = '0 6px 18px rgba(0,0,0,0.12)';
+      wrapper.appendChild(img); return wrapper;
+    };
+
+    // Partner generator + agent
     function randomBetween(a, b) { return a + Math.random() * (b - a); }
     function randInt(a, b) { return Math.floor(randomBetween(a, b + 1)); }
     function randomColor() { const h = Math.floor(Math.random() * 360); const s = randInt(40, 95); const l = randInt(30, 70); return `hsl(${h} ${s}% ${l}%)`; }
@@ -481,11 +478,7 @@
       try {
         if (!canvasesCache.length) return;
         if (Math.random() > PARTNER_DRAW_PROB) return;
-        const candidates = canvasesCache.filter(c => {
-          if (Date.now() >= (c && c.expiresAt || 0)) return false;
-          if (!c.shared && c.owner === 'me') return false;
-          return true;
-        });
+        const candidates = canvasesCache.filter(c => { if (Date.now() >= (c && c.expiresAt || 0)) return false; if (!c.shared && c.owner === 'me') return false; return true; });
         if (!candidates.length) return;
         const canvas = candidates[randInt(0, candidates.length - 1)];
         const count = randInt(1, 6);
@@ -494,19 +487,20 @@
           canvas.actions.push(action);
         }
         canvas.lastModifiedAt = Date.now(); canvas.partnerEdited = true;
-        saveCanvasesLocal(canvasesCache).catch(() => { }); throttledSave();
+        saveCanvasesLocal(canvasesCache).catch(() => {}); throttledSave();
         if (Math.random() < PARTNER_SHARE_PROB) {
           const tmp = document.createElement('canvas'); tmp.width = CANVAS_DEFAULT_W; tmp.height = CANVAS_DEFAULT_H;
           const ctx = tmp.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tmp.width, tmp.height);
-          for (const a of canvas.actions) drawAction(ctx, a);
+          for (const a of canvas.actions) drawAction(ctx, a, true);
           const dataURL = tmp.toDataURL('image/png'); const hash = checksumSnapshotDataURL(dataURL);
           if (canvas.lastSentHash !== hash && canvas.partnerEdited) {
             const now = Date.now();
             const partnerName = (window.settings && window.settings.partnerName) ? window.settings.partnerName : (typeof window.PARTNER_NAME !== 'undefined' ? window.PARTNER_NAME : '对方');
             const msg = { id: now + Math.floor(Math.random() * 1000), from: 'partner', sender: partnerName, createdAt: now, timestamp: new Date(now), type: 'image', text: '', image: dataURL, status: 'received', canvasSnapshot: { canvasId: canvas.id, structured: JSON.parse(JSON.stringify(canvas.actions)), width: CANVAS_DEFAULT_W, height: CANVAS_DEFAULT_H } };
             pushChatMessage(msg);
-            canvas.lastSentHash = hash; canvas.partnerEdited = false; saveCanvasesLocal(canvasesCache).catch(() => { }); throttledSave();
-            try { window._sendPartnerNotification && window._sendPartnerNotification(partnerName, '发送了画布'); } catch (e) { }
+            canvas.lastSentHash = hash; canvas.partnerEdited = false;
+            saveCanvasesLocal(canvasesCache).catch(() => {}); throttledSave();
+            try { window._sendPartnerNotification && window._sendPartnerNotification(partnerName, '发送了画布'); } catch (e) {}
           }
         }
       } catch (e) { console.warn('[drawTogether] partnerAgentTick error', e); }
@@ -515,7 +509,7 @@
     let partnerAgentHandle = null;
     function startPartnerAgent() { if (partnerAgentHandle) clearInterval(partnerAgentHandle); partnerAgentHandle = setInterval(partnerAgentTick, PARTNER_TICK_INTERVAL); }
 
-    // --- Schedule follow-up after partner message arrives ---
+    // follow-up after partner message
     function schedulePartnerDrawAfterMessage(msg) {
       try {
         const isPartnerMsg = msg && (msg.from === 'partner' || (msg.sender && msg.from !== 'me' && msg.from !== 'me'));
@@ -531,26 +525,28 @@
             const action = Math.random() > 0.45 ? generateRandomStroke() : generateRandomShape();
             canvas.actions.push(action);
           }
-          canvas.lastModifiedAt = Date.now(); canvas.partnerEdited = true; await saveCanvasesLocal(canvasesCache); throttledSave();
+          canvas.lastModifiedAt = Date.now(); canvas.partnerEdited = true;
+          await saveCanvasesLocal(canvasesCache); throttledSave();
           if (PARTNER_FORCE_SHARE_ON_FOLLOWUP) {
             const tmp = document.createElement('canvas'); tmp.width = CANVAS_DEFAULT_W; tmp.height = CANVAS_DEFAULT_H;
             const ctx = tmp.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tmp.width, tmp.height);
-            for (const a of canvas.actions) drawAction(ctx, a);
+            for (const a of canvas.actions) drawAction(ctx, a, true);
             const dataURL = tmp.toDataURL('image/png'); const now = Date.now();
             const partnerName = (window.settings && window.settings.partnerName) ? window.settings.partnerName : (typeof window.PARTNER_NAME !== 'undefined' ? window.PARTNER_NAME : '对方');
             const out = { id: now + Math.floor(Math.random() * 1000), from: 'partner', sender: partnerName, createdAt: now, timestamp: new Date(now), type: 'image', text: '', image: dataURL, status: 'received', canvasSnapshot: { canvasId: canvas.id, structured: JSON.parse(JSON.stringify(canvas.actions)), width: CANVAS_DEFAULT_W, height: CANVAS_DEFAULT_H } };
             pushChatMessage(out);
-            canvas.lastSentHash = checksumSnapshotDataURL(dataURL); canvas.partnerEdited = false; await saveCanvasesLocal(canvasesCache); throttledSave();
+            canvas.lastSentHash = checksumSnapshotDataURL(dataURL); canvas.partnerEdited = false;
+            await saveCanvasesLocal(canvasesCache); throttledSave();
           }
         }, delayMs);
       } catch (e) { console.warn('[drawTogether] schedulePartnerDrawAfterMessage error', e); }
     }
 
-    // Hook addMessage and window.messages push to detect partner messages
+    // Hook addMessage and messages push
     if (typeof window.addMessage === 'function' && !window.addMessage.__drawTogetherWrapped) {
       const orig = window.addMessage;
       window.addMessage = function (msg) {
-        try { orig.apply(this, arguments); } catch (e) { try { orig(msg); } catch (e2) { console.warn('[drawTogether] addMessage wrapper error', e2); } }
+        try { orig.apply(this, arguments); } catch (e) { try { orig(msg); } catch (e2) { console.warn('[drawTogether] addMessage wrapper failed', e2); } }
         try { schedulePartnerDrawAfterMessage(msg); } catch (e) { console.warn('[drawTogether] schedule hook error', e); }
       };
       window.addMessage.__drawTogetherWrapped = true;
@@ -563,7 +559,7 @@
           if (prop === 'push') {
             return function (...args) {
               const res = Array.prototype.push.apply(target, args);
-              try { schedulePartnerDrawAfterMessage(args[args.length - 1]); } catch (e) { }
+              try { schedulePartnerDrawAfterMessage(args[args.length - 1]); } catch (e) {}
               return res;
             };
           }
@@ -575,7 +571,7 @@
       window.messages = proxy;
     }
 
-    // --- Public API & initialization ---
+    // Public API
     window.drawTogether = window.drawTogether || {};
     Object.assign(window.drawTogether, {
       openCanvasModalById: function (id) { try { openCanvasModal(id); } catch (e) { console.warn('[drawTogether] open error', e); } },
@@ -583,7 +579,6 @@
       listCanvases: function () { return canvasesCache.slice(); },
       load: async function () { await loadAndCache(); return canvasesCache; },
       saveAll: function () { return saveCanvasesLocal(canvasesCache); },
-      // runtime setters
       setPartnerTickInterval: function (ms) { PARTNER_TICK_INTERVAL = Math.max(1000, Number(ms) || PARTNER_TICK_INTERVAL); startPartnerAgent(); },
       setPartnerDrawProb: function (p) { PARTNER_DRAW_PROB = Math.min(1, Math.max(0, Number(p))); },
       setPartnerShareProb: function (p) { PARTNER_SHARE_PROB = Math.min(1, Math.max(0, Number(p))); },
@@ -596,8 +591,7 @@
       try {
         await loadAndCache();
         startPartnerAgent();
-        console.debug('[drawTogether] ready — canvases:', canvasesCache.length);
-        // optional binding to element with id canvas-btn
+        console.debug('[drawTogether] ready; canvases:', canvasesCache.length);
         const canvasBtn = document.getElementById('canvas-btn');
         if (canvasBtn) {
           canvasBtn.addEventListener('click', () => {
@@ -612,7 +606,7 @@
     window.__drawTogetherError = null;
     console.debug('[drawTogether] loaded successfully');
   } catch (err) {
-    try { window.__drawTogetherLoaded = false; window.__drawTogetherError = (err && err.stack) ? err.stack.toString() : String(err); } catch (e) { }
+    try { window.__drawTogetherLoaded = false; window.__drawTogetherError = (err && err.stack) ? err.stack.toString() : String(err); } catch (e) {}
     console.error('[drawTogether] top-level initialization error', err);
   }
 })();
