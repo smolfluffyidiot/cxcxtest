@@ -1,0 +1,5 @@
+/* Canvas UI basics */
+#canvas-modal .modal-content { display:flex; align-items:center; justify-content:center; }
+#canvas-modal canvas { background: #fff; border:1px solid var(--border-color); }
+.canvas-tool-btn.active { background: rgba(var(--accent-color-rgb,197,164,126),0.12); border-radius:6px; }
+.canvas-msg img { display:block; }
