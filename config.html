@@ -1705,28 +1705,28 @@
                     <div class="settings-item" id="companion-diary-function">
                         <i class="fas fa-book"></i><span>陪伴日记</span>
                     </div>
-                    <div class="settings-item" id="open-draw-together" title="画布" style="cursor:pointer;"
-                     onclick="(function(){
-                       try {
-                         if (!window.drawTogether || typeof window.drawTogether.newCanvas !== 'function') {
-                           alert('Draw Together 模块尚未加载，请确认已包含 js/draw-together.js');
-                           return;
-                         }
-                         const c = window.drawTogether.newCanvas({ title: '画布', owner: 'me', shared: false });
-                         if (c && typeof window.drawTogether.openCanvasModalById === 'function') {
-                           window.drawTogether.openCanvasModalById(c.id);
-                         } else if (typeof window.openCanvasModal === 'function') {
-                           window.openCanvasModal(c.id);
-                         } else {
-                           alert('已创建画布，但打开画布界面失败（缺少 openCanvasModal）');
-                         }
-                       } catch (e) {
-                         console.error('打开 Draw Together 失败', e);
-                         alert('打开 Draw Together 失败，查看控制台以获取详情');
-                       }
-                     })()">
-                  <i class="fas fa-paint-brush"></i><span>画布 · Draw Together</span>
-                </div>
+                    <div class="settings-item" id="open-draw-together" title="画布 · Draw Together" style="cursor:pointer;"
+                         onclick="(function(){
+                           try {
+                             if (!window.drawTogether || typeof window.drawTogether.newCanvas !== 'function') {
+                               alert('Draw Together 模块尚未加载，请确认已包含 js/draw-together.js');
+                               return;
+                             }
+                             const c = window.drawTogether.newCanvas({ title: '画布', owner: 'me', shared: false });
+                             if (c && typeof window.drawTogether.openCanvasModalById === 'function') {
+                               window.drawTogether.openCanvasModalById(c.id);
+                             } else if (typeof window.openCanvasModal === 'function') {
+                               window.openCanvasModal(c.id);
+                             } else {
+                               alert('已创建画布，但打开画布界面失败（缺少 openCanvasModal）');
+                             }
+                           } catch (e) {
+                             console.error('打开 Draw Together 失败', e);
+                             alert('打开 Draw Together 失败，查看控制台以获取详情');
+                           }
+                         })()">
+                      <i class="fas fa-paint-brush"></i><span>画布 · Draw Together</span>
+                    </div>
                     <div class="settings-item" id="music-player-toggle" style="display:none;">
                         <i class="fas fa-music"></i><span>悬浮音乐播放器</span>
                     </div>
@@ -2051,6 +2051,44 @@
                 <button class="modal-btn modal-btn-primary" id="edit-partner-mood" onclick="editPartnerMoodRecord()" style="font-size:12px; padding:6px 12px; background:rgba(255,107,107,0.8);" data-edit-partner>修改梦角</button>
             </div>
         </div>
+    </div>
+
+    <!-- Draw Together Modal (required by js/draw-together.js) -->
+    <div class="modal" id="canvas-modal" style="z-index:2200; display:none;">
+      <div class="modal-content" style="max-width:920px; width:calc(100% - 40px); padding:0; background:transparent;">
+        <div style="background:var(--secondary-bg);border-radius:12px;overflow:hidden;">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid var(--border-color);">
+            <div style="font-weight:600;">Draw Together · 画布</div>
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+              <select id="canvas-permission-select" style="padding:6px;border-radius:8px;">
+                <option value="individual">Individual</option>
+                <option value="shared">Shared</option>
+              </select>
+              <button id="canvas-send-to-chat" class="modal-btn modal-btn-primary">Send to Chat</button>
+              <button id="canvas-save-close" class="modal-btn modal-btn-secondary">Close</button>
+            </div>
+          </div>
+    
+          <div style="display:flex;gap:12px;padding:12px;">
+            <div id="canvas-toolbar" style="width:220px;flex-shrink:0;"></div>
+    
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+              <div style="background:var(--primary-bg);border-radius:8px;padding:8px;display:flex;justify-content:center;align-items:center;">
+                <canvas id="drawing-canvas" width="800" height="500" style="max-width:100%;height:auto;background:#fff;border-radius:6px;box-shadow:0 8px 20px rgba(0,0,0,0.06);"></canvas>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;">
+                <button id="canvas-new" class="modal-btn">New</button>
+                <button id="canvas-undo" class="modal-btn">Undo</button>
+                <button id="canvas-clear" class="modal-btn">Clear</button>
+                <label style="display:flex;align-items:center;gap:8px;margin-left:12px;font-size:13px;color:var(--text-secondary);">
+                  <input type="checkbox" id="canvas-private-lock" style="pointer-events:none;"> 已锁定（到期后不可编辑）
+                </label>
+              </div>
+            </div>
+          </div>
+    
+        </div>
+      </div>
     </div>
     
     <div class="modal" id="theme-editor-modal">
