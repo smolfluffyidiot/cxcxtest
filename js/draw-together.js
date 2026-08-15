@@ -239,14 +239,42 @@
         if (defaultBtn) { defaultBtn.classList.add('active'); container.dataset.selectedTool = 'brush'; }
       }
 
+      // replace the existing openCanvasModal & closeCanvasModal with this improved version
       function openCanvasModal(canvasId) {
         const modal = document.getElementById('canvas-modal');
         const canvasEl = document.getElementById('drawing-canvas');
         const toolbar = document.getElementById('canvas-toolbar');
-
-        if (!modal || !canvasEl || !toolbar) { console.warn('[drawTogether] Canvas modal elements missing'); notify('Canvas UI missing from page', 'error'); return; }
-        modal.style.display = 'flex';
-
+      
+        if (!modal || !canvasEl || !toolbar) {
+          console.warn('[drawTogether] Canvas modal elements missing');
+          notify('Canvas UI missing from page', 'error');
+          return;
+        }
+      
+        // Force very high stacking so it's not hidden by overlays / welcome screens
+        modal.style.zIndex = '999999';
+        // Make sure modal-content is visible and not transformed/transparent
+        const content = modal.querySelector('.modal-content');
+        if (content) {
+          content.style.opacity = '1';
+          content.style.transform = 'none';
+        }
+      
+        // Use app modal manager if present for consistent behavior
+        if (typeof showModal === 'function') {
+          try {
+            showModal(modal, modal.querySelector('.modal-content') || null);
+          } catch (e) {
+            modal.style.display = 'flex';
+          }
+        } else {
+          modal.style.display = 'flex';
+        }
+      
+        // Prevent background scroll while modal shown (match app behavior)
+        try { document.body.style.overflow = 'hidden'; } catch(e){}
+      
+        // build toolbar UI once
         if (!toolbar.dataset.built) {
           buildToolbar(toolbar);
           toolbar.dataset.built = '1';
@@ -255,12 +283,12 @@
           if (undoBtn) undoBtn.addEventListener('click', () => window.doUndo && window.doUndo());
           if (clearBtn) clearBtn.addEventListener('click', () => window.doClear && window.doClear());
         }
-
+      
         let canvasObj = canvasId ? findCanvasById(canvasId) : null;
-        if (!canvasObj) canvasObj = createCanvasObject({ title: canvasId ? 'Loaded' : 'New', shared:false });
-
+        if (!canvasObj) canvasObj = createCanvasObject({ title: canvasId ? 'Loaded' : 'New', shared: false });
+      
         activeCanvas = canvasObj;
-
+      
         const permSelect = document.getElementById('canvas-permission-select');
         if (permSelect) {
           permSelect.value = canvasObj.shared ? 'shared' : 'individual';
@@ -269,27 +297,45 @@
             canvasObj.shared = val === 'shared';
             canvasObj.owner = canvasObj.shared ? 'shared' : canvasObj.owner === 'shared' ? 'me' : canvasObj.owner;
             canvasObj.lastModifiedAt = Date.now();
-            saveCanvasesLocal(canvasesCache);
+            saveCanvases(canvasesCache);
           };
         }
+      
         const lockCheckbox = document.getElementById('canvas-private-lock');
         if (lockCheckbox) { lockCheckbox.checked = Date.now() >= canvasObj.expiresAt; lockCheckbox.disabled = true; }
-
+      
         const sendBtn = document.getElementById('canvas-send-to-chat');
         if (sendBtn) sendBtn.onclick = function(){ sendCanvasToChat(canvasObj); };
-
+      
         const closeBtn = document.getElementById('canvas-save-close');
         if (closeBtn) closeBtn.onclick = function(){ closeCanvasModal(); };
-
+      
         initDrawingCanvas(canvasEl, canvasObj);
         redrawFromActions(canvasEl, canvasObj.actions || []);
       }
-
+      
       function closeCanvasModal() {
         const modal = document.getElementById('canvas-modal');
-        if (modal) modal.style.display = 'none';
+        if (!modal) return;
+      
+        // Use app modal manager if present
+        if (typeof hideModal === 'function') {
+          try { hideModal(modal); }
+          catch (e) { modal.style.display = 'none'; }
+        } else {
+          modal.style.display = 'none';
+          const content = modal.querySelector('.modal-content');
+          if (content) {
+            content.style.opacity = '0';
+            content.style.transform = 'translateY(20px) scale(0.95)';
+          }
+        }
+      
+        // restore body scrolling
+        try { document.body.style.overflow = ''; } catch(e){}
+      
         activeCanvas = null;
-        saveCanvasesLocal(canvasesCache).catch(()=>{});
+        saveCanvases(canvasesCache).catch(()=>{});
       }
 
       function initDrawingCanvas(canvasEl, canvasObj) {
