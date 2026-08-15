@@ -1705,24 +1705,54 @@
                     <div class="settings-item" id="companion-diary-function">
                         <i class="fas fa-book"></i><span>陪伴日记</span>
                     </div>
-                    <div class="settings-item" id="open-draw-together" title="画布 · Draw Together" style="cursor:pointer;"
+                    <div class="settings-item" id="open-draw-together" title="画布" style="cursor:pointer;"
                          onclick="(function(){
-                           try {
-                             if (!window.drawTogether || typeof window.drawTogether.newCanvas !== 'function') {
-                               alert('Draw Together 模块尚未加载，请确认已包含 js/draw-together.js');
-                               return;
+                           function openAfterLoad(){
+                             try {
+                               if (!window.drawTogether || typeof window.drawTogether.newCanvas !== 'function') {
+                                 alert('Draw Together 模块加载失败或不兼容，请查看控制台。');
+                                 return;
+                               }
+                               const c = window.drawTogether.newCanvas({ title: '画布', owner: 'me', shared: false });
+                               if (c && typeof window.drawTogether.openCanvasModalById === 'function') {
+                                 window.drawTogether.openCanvasModalById(c.id);
+                               } else if (typeof window.openCanvasModal === 'function') {
+                                 window.openCanvasModal(c.id);
+                               } else {
+                                 alert('已创建画布，但打开画布界面失败（缺少 openCanvasModal）');
+                               }
+                             } catch (e) {
+                               console.error('打开 Draw Together 失败', e);
+                               alert('打开 Draw Together 失败，查看控制台以获取详情');
                              }
-                             const c = window.drawTogether.newCanvas({ title: '画布', owner: 'me', shared: false });
-                             if (c && typeof window.drawTogether.openCanvasModalById === 'function') {
-                               window.drawTogether.openCanvasModalById(c.id);
-                             } else if (typeof window.openCanvasModal === 'function') {
-                               window.openCanvasModal(c.id);
-                             } else {
-                               alert('已创建画布，但打开画布界面失败（缺少 openCanvasModal）');
-                             }
-                           } catch (e) {
-                             console.error('打开 Draw Together 失败', e);
-                             alert('打开 Draw Together 失败，查看控制台以获取详情');
+                           }
+                    
+                           if (window.drawTogether && typeof window.drawTogether.newCanvas === 'function') {
+                             openAfterLoad();
+                             return;
+                           }
+                    
+                           // If the script was not loaded, inject it and wait for onload
+                           if (!document.querySelector('script[data-draw-together]')) {
+                             var s = document.createElement('script');
+                             s.src = 'js/draw-together.js';
+                             s.setAttribute('data-draw-together','1');
+                             s.onload = openAfterLoad;
+                             s.onerror = function(){ alert('加载 draw-together.js 失败，请确认文件存在并且路径正确（js/draw-together.js）'); };
+                             document.body.appendChild(s);
+                           } else {
+                             // script tag exists but module not ready yet – wait briefly
+                             var tries = 0;
+                             var t = setInterval(function(){
+                               tries++;
+                               if (window.drawTogether && typeof window.drawTogether.newCanvas === 'function') {
+                                 clearInterval(t);
+                                 openAfterLoad();
+                               } else if (tries > 40) { // ~8s timeout
+                                 clearInterval(t);
+                                 alert('加载 Draw Together 超时，请检查控制台错误或手动刷新页面');
+                               }
+                             }, 200);
                            }
                          })()">
                       <i class="fas fa-paint-brush"></i><span>画布 · Draw Together</span>
