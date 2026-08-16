@@ -1,56 +1,39 @@
 /* name=js/draw-together.js
-   Fixed: Avoid calling getStorageKey() while SESSION_ID is uninitialized.
-   Self-contained, defensive Draw Together panel that persists drawings.
+   Improved Draw Together integration with SESSION_ID-safe storage and migration.
+
+   What this version fixes:
+   - NEVER calls core.getStorageKey() while SESSION_ID is uninitialized.
+   - When SESSION_ID becomes available later, attempts to migrate any drawings
+     saved under the fallback key into the session-scoped key returned by getStorageKey().
+   - Uses localforage when available; falls back to localStorage.
+   - Defensive, self-contained UI panel (launcher + panel) and drawing engine.
+   - Sends drawing messages via addMessage() if available, otherwise falls back to window.messages + renderMessages().
+   - Random partner doodles remain, mobile-friendly, and drawings survive reloads.
+
+   Install: replace js/draw-together.js with this file and include it after other scripts.
 */
+
 (function () {
   'use strict';
 
-  // ---------- Config ----------
+  // Config
   const CANVAS_W = 800;
   const CANVAS_H = 500;
-  // Note: we will only call getStorageKey() when SESSION_ID is available
   const SAFE_SUFFIX = 'canvas_last_drawing_v1';
   const PARTNER_REPLY_PROB = 1;
   const PARTNER_MIN_OBJ = 3;
   const PARTNER_MAX_OBJ = 12;
   const SAVE_DEBOUNCE_MS = 300;
+  const SESSION_POLL_INTERVAL = 500; // ms
+  const SESSION_POLL_TIMEOUT = 30000; // ms
 
-  // ---------- Logging ----------
+  // Simple logging helpers
   const log = (...a) => { try { console.info('[DrawTogether]', ...a); } catch (e) {} };
   const warn = (...a) => { try { console.warn('[DrawTogether]', ...a); } catch (e) {} };
   const err = (...a) => { try { console.error('[DrawTogether]', ...a); } catch (e) {} };
 
-  // ---------- Safe storage key builder ----------
-  function storageKey() {
-    // Only call getStorageKey if SESSION_ID has been set (non-null / non-empty).
-    try {
-      if (typeof SESSION_ID !== 'undefined' && SESSION_ID !== null) {
-        if (typeof getStorageKey === 'function') {
-          try {
-            return getStorageKey(SAFE_SUFFIX);
-          } catch (e) {
-            // getStorageKey may still throw; fall through to other fallbacks
-            warn('getStorageKey threw, falling back:', e && e.message ? e.message : e);
-          }
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    // If APP_PREFIX exists, prefer it
-    try {
-      if (typeof window.APP_PREFIX === 'string' && window.APP_PREFIX.length > 0) {
-        return window.APP_PREFIX + SAFE_SUFFIX;
-      }
-    } catch (e) {}
-
-    // final safe fallback
-    return 'app_' + SAFE_SUFFIX;
-  }
-
-  // ---------- Storage helpers ----------
-  function saveItem(key, value) {
+  // Storage helpers (localforage preferred)
+  function saveItemRaw(key, value) {
     try {
       if (window.localforage) return localforage.setItem(key, value).catch(e => { warn('localforage.setItem failed', e); });
       localStorage.setItem(key, JSON.stringify(value));
@@ -60,17 +43,134 @@
       return Promise.resolve();
     }
   }
-  function loadItem(key) {
+  function loadItemRaw(key) {
     try {
       if (window.localforage) return localforage.getItem(key).catch(e => { warn('localforage.getItem failed', e); return null; });
       const raw = localStorage.getItem(key);
       return Promise.resolve(raw ? JSON.parse(raw) : null);
     } catch (e) {
-      try { const raw2 = localStorage.getItem(key); return Promise.resolve(raw2 ? JSON.parse(raw2) : null); } catch (ee) { warn('loadItem fallback failed', ee); return Promise.resolve(null); }
+      try { const raw2 = localStorage.getItem(key); return Promise.resolve(raw2 ? JSON.parse(raw2) : null); } catch (ee) { warn('loadItemRaw fallback failed', ee); return Promise.resolve(null); }
+    }
+  }
+  function removeItemRaw(key) {
+    try {
+      if (window.localforage) return localforage.removeItem(key).catch(e => { warn('localforage.removeItem failed', e); });
+      localStorage.removeItem(key);
+      return Promise.resolve();
+    } catch (e) { try { localStorage.removeItem(key); } catch (ee) {} return Promise.resolve(); }
+  }
+
+  // Storage key helpers (deferred)
+  function fallbackStorageKey() {
+    try {
+      if (typeof window.APP_PREFIX === 'string' && window.APP_PREFIX.length > 0) return window.APP_PREFIX + SAFE_SUFFIX;
+    } catch (e) {}
+    return 'app_' + SAFE_SUFFIX;
+  }
+
+  // safe attempt to obtain session-scoped key using core.getStorageKey
+  function tryGetSessionKey() {
+    try {
+      if (typeof SESSION_ID === 'undefined' || SESSION_ID === null) return null;
+      if (typeof getStorageKey !== 'function') return null;
+      try {
+        return getStorageKey(SAFE_SUFFIX);
+      } catch (e) {
+        // core.getStorageKey may throw until SESSION_ID is fully valid; treat as not ready
+        warn('getStorageKey threw while trying to compute session key:', e && e.message ? e.message : e);
+        return null;
+      }
+    } catch (e) {
+      return null;
     }
   }
 
-  // ---------- UI styles ----------
+  // Compute the effective key to use at call time (session-scoped if available, else fallback)
+  function effectiveKey() {
+    const k = tryGetSessionKey();
+    if (k) return k;
+    return fallbackStorageKey();
+  }
+
+  // Attempt migration from fallbackKey -> sessionKey when session becomes available
+  async function migrateFallbackToSession() {
+    const sessionKey = tryGetSessionKey();
+    if (!sessionKey) return;
+    const fallbackKeyValue = fallbackStorageKey();
+    try {
+      // check localforage first if available
+      if (window.localforage) {
+        const fallbackData = await localforage.getItem(fallbackKeyValue).catch(() => null);
+        if (fallbackData) {
+          // copy to session key
+          await localforage.setItem(sessionKey, fallbackData).catch(e => { warn('migrate: setItem failed', e); });
+          // remove fallback
+          try { await localforage.removeItem(fallbackKeyValue).catch(()=>{}); } catch (_) {}
+          // also try to remove from localStorage to keep things tidy
+          try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
+          log('Migrated DrawTogether data from fallback to session storage.');
+          return;
+        }
+      }
+      // fallback to localStorage
+      const raw = localStorage.getItem(fallbackKeyValue);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          // store into localforage if available else localStorage sessionKey
+          if (window.localforage) {
+            await localforage.setItem(sessionKey, parsed).catch(()=>{});
+            // remove fallback localStorage
+            try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
+            // also remove fallback localforage if any (redundant)
+            try { await localforage.removeItem(fallbackKeyValue).catch(()=>{}); } catch (_) {}
+            log('Migrated DrawTogether data from localStorage fallback to localforage session key.');
+          } else {
+            localStorage.setItem(sessionKey, raw);
+            try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
+            log('Migrated DrawTogether data from localStorage fallback to localStorage session key.');
+          }
+        } catch (e) {
+          warn('migrateFallbackToSession: parse failed', e);
+        }
+      } else {
+        // nothing to migrate
+      }
+    } catch (e) {
+      warn('migrateFallbackToSession failed', e);
+    }
+  }
+
+  // Wait for SESSION_ID/getStorageKey to become available (poll), then call migration once
+  function whenSessionReadyThenMigrate() {
+    return new Promise(resolve => {
+      const sessionKey = tryGetSessionKey();
+      if (sessionKey) {
+        migrateFallbackToSession().then(()=>resolve());
+        return;
+      }
+      let elapsed = 0;
+      const t = setInterval(() => {
+        const k = tryGetSessionKey();
+        elapsed += SESSION_POLL_INTERVAL;
+        if (k || elapsed >= SESSION_POLL_TIMEOUT) {
+          clearInterval(t);
+          if (k) {
+            migrateFallbackToSession().then(()=>resolve());
+          } else resolve(); // give up after timeout
+        }
+      }, SESSION_POLL_INTERVAL);
+    });
+  }
+
+  // Small helpers used by drawing logic
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function randRange(a,b){ return a + Math.random()*(b-a); }
+  function randInt(a,b){ return Math.floor(randRange(a,b+1)); }
+  function randomHsl(){ const h=randInt(0,360), s=50+randInt(0,30), l=30+randInt(0,30); return `hsl(${h} ${s}% ${l}%)`; }
+  function randomTranslucent(){ const h=randInt(0,360), s=50+randInt(0,30), l=30+randInt(0,30), a=(0.12+Math.random()*0.6).toFixed(2); return `hsla(${h}, ${s}%, ${l}%, ${a})`; }
+
+  // UI (self-contained panel & launcher)
   const STYLE_ID = 'dt-styles';
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -91,12 +191,9 @@
     s.id = STYLE_ID; s.textContent = css; document.head.appendChild(s);
   }
 
-  // ---------- Build UI (self-contained panel + launcher) ----------
   function buildUI() {
     if (document.getElementById('dt-launcher')) return getUI();
-
     ensureStyles();
-
     const launcher = document.createElement('button');
     launcher.id = 'dt-launcher';
     launcher.title = 'Draw Together';
@@ -146,10 +243,8 @@
       </div>
     `;
     document.body.appendChild(panel);
-
     return getUI();
   }
-
   function getUI() {
     return {
       launcher: document.getElementById('dt-launcher'),
@@ -168,7 +263,7 @@
     };
   }
 
-  // ---------- Simple robust engine (defensive) ----------
+  // Engine factory with safe storage usage
   function createEngine(ui) {
     const canvas = ui.canvas;
     let ctx = null;
@@ -183,7 +278,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    // structured actions array
+    // data structures
     let actions = [];
     let undone = [];
     let tempShape = null;
@@ -196,24 +291,20 @@
     let currentStroke = null;
     let saveTimer = null;
 
+    // schedule save using effectiveKey() computed at call time
     function scheduleSave() {
       if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
+      saveTimer = setTimeout(async () => {
         try {
-          saveItem(storageKey(), { actions: actions, t: Date.now() });
+          const key = effectiveKey();
+          await saveItemRaw(key, { actions, t: Date.now() });
         } catch (e) { warn('scheduleSave failed', e); }
       }, SAVE_DEBOUNCE_MS);
     }
 
-    function pushAction(a) {
-      actions.push(a);
-      undone = [];
-      scheduleSave();
-      redraw();
-    }
+    function pushAction(a) { actions.push(a); undone = []; scheduleSave(); redraw(); }
     function clearAll() { actions = []; undone = []; scheduleSave(); redraw(); }
     function undo() { if (!actions.length) return; undone.push(actions.pop()); scheduleSave(); redraw(); }
-    function redo() { if (!undone.length) return; actions.push(undone.pop()); scheduleSave(); redraw(); }
 
     function clientToCanvas(evt) {
       const rect = canvas.getBoundingClientRect();
@@ -243,29 +334,21 @@
           c.stroke();
           c.restore();
         } else if (a.type === 'line') {
-          c.save();
-          c.lineWidth = a.width || 2;
-          c.strokeStyle = a.color || '#000';
+          c.save(); c.lineWidth = a.width || 2; c.strokeStyle = a.color || '#000';
           if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
           c.beginPath(); c.moveTo(a.x1,a.y1); c.lineTo(a.x2,a.y2); c.stroke(); c.restore();
         } else if (a.type === 'rect') {
-          c.save();
-          c.lineWidth = a.width || 2;
-          if (a.fill) { c.fillStyle = a.fill; c.fillRect(a.x, a.y, a.w, a.h); }
+          c.save(); c.lineWidth = a.width || 2;
+          if (a.fill) { c.fillStyle = a.fill; c.fillRect(a.x,a.y,a.w,a.h); }
           if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          c.strokeStyle = a.color || '#000';
-          c.strokeRect(a.x, a.y, a.w, a.h);
-          c.restore();
+          c.strokeStyle = a.color || '#000'; c.strokeRect(a.x,a.y,a.w,a.h); c.restore();
         } else if (a.type === 'circle') {
-          c.save();
-          c.lineWidth = a.width || 2;
-          c.beginPath(); c.arc(a.cx, a.cy, a.r, 0, Math.PI*2);
+          c.save(); c.lineWidth = a.width || 2; c.beginPath(); c.arc(a.cx,a.cy,a.r,0,Math.PI*2);
           if (a.fill) { c.fillStyle = a.fill; c.fill(); }
           if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
           c.strokeStyle = a.color || '#000'; c.stroke(); c.restore();
         } else if (a.type === 'polygon') {
-          c.save(); c.lineWidth = a.width || 2;
-          c.beginPath();
+          c.save(); c.lineWidth = a.width || 2; c.beginPath();
           const n = Math.max(3, Math.floor(a.sides || 3));
           for (let i=0;i<n;i++){
             const ang = (a.rotation || 0) + (i/n)*Math.PI*2;
@@ -300,52 +383,172 @@
       }
     }
     function onMove(e) {
-      if (!isDrawing) return; const p = clientToCanvas(e);
-      if (currentTool === 'brush' || currentTool === 'eraser') { if (!currentStroke) return; currentStroke.points.push(p); redraw(); }
-      else if (currentTool === 'line') { tempShape = { type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }; redraw(); }
-      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); tempShape = { type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }; redraw(); }
-      else if (currentTool === 'rect') { const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y); tempShape = { type:'rect', x, y, w, h, color: currentColor, width: currentSize }; redraw(); }
-      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); tempShape = { type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }; redraw(); }
+      if (!isDrawing) return;
+      const p = clientToCanvas(e);
+      if (currentTool === 'brush' || currentTool === 'eraser') {
+        if (!currentStroke) return; currentStroke.points.push(p); redraw();
+      } else if (currentTool === 'line') {
+        tempShape = { type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }; redraw();
+      } else if (currentTool === 'circle') {
+        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
+        tempShape = { type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }; redraw();
+      } else if (currentTool === 'rect') {
+        const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y);
+        tempShape = { type:'rect', x, y, w, h, color: currentColor, width: currentSize }; redraw();
+      } else if (currentTool === 'polygon') {
+        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
+        tempShape = { type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }; redraw();
+      }
     }
     function onUp(e) {
-      if (!isDrawing) return; isDrawing = false; const p = clientToCanvas(e);
+      if (!isDrawing) return;
+      isDrawing = false;
+      const p = clientToCanvas(e);
       if (currentTool === 'brush' || currentTool === 'eraser') { currentStroke = null; scheduleSave(); }
-      else if (currentTool === 'line') { pushAction({ type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }); }
-      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }); }
+      else if (currentTool === 'line') pushAction({ type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize });
+      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y, r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }); }
       else if (currentTool === 'rect') { const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y); pushAction({ type:'rect', x, y, w, h, color: currentColor, width: currentSize }); }
-      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }); }
+      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y, r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }); }
       tempShape = null; startPos = null; redraw();
     }
 
     function attachEvents() {
       try {
-        if (window.PointerEvent) { canvas.addEventListener('pointerdown', onDown); canvas.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); }
-        else { canvas.addEventListener('mousedown', onDown); canvas.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); canvas.addEventListener('touchstart', onDown, { passive:false }); canvas.addEventListener('touchmove', onMove, { passive:false }); window.addEventListener('touchend', onUp); }
+        if (window.PointerEvent) {
+          canvas.addEventListener('pointerdown', onDown);
+          canvas.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+        } else {
+          canvas.addEventListener('mousedown', onDown);
+          canvas.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+          canvas.addEventListener('touchstart', onDown, { passive:false });
+          canvas.addEventListener('touchmove', onMove, { passive:false });
+          window.addEventListener('touchend', onUp);
+        }
       } catch (e) { warn('attachEvents failed', e); }
     }
 
-    function loadSaved() { return loadItem(storageKey()).then(payload => {
-      try { if (payload && Array.isArray(payload.actions)) actions = payload.actions.slice(); else actions = []; } catch(e){ actions = []; }
-      undone = []; redraw();
-    }).catch(e=>{ warn('loadSaved error', e); actions = []; redraw(); }); }
+    async function loadSaved() {
+      try {
+        // attempt session key first (if available), else fallback
+        const sessionKey = tryGetSessionKey();
+        if (sessionKey) {
+          // try localforage then localStorage
+          if (window.localforage) {
+            const v = await localforage.getItem(sessionKey).catch(()=>null);
+            if (v && Array.isArray(v.actions)) { actions = v.actions.slice(); undone = []; redraw(); return; }
+          }
+          // fallback to localStorage
+          try {
+            const raw = localStorage.getItem(sessionKey);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && Array.isArray(parsed.actions)) { actions = parsed.actions.slice(); undone = []; redraw(); return; }
+            }
+          } catch (e) {}
+        }
+        // session not ready or session key had nothing — try fallback key
+        const fallbackKey = fallbackStorageKey();
+        if (window.localforage) {
+          const v2 = await localforage.getItem(fallbackKey).catch(()=>null);
+          if (v2 && Array.isArray(v2.actions) || (v2 && v2.actions)) { actions = Array.isArray(v2.actions) ? v2.actions.slice() : v2.actions; undone = []; redraw(); return; }
+        }
+        try {
+          const raw2 = localStorage.getItem(fallbackKey);
+          if (raw2) {
+            const parsed2 = JSON.parse(raw2);
+            if (parsed2 && Array.isArray(parsed2.actions)) { actions = parsed2.actions.slice(); undone = []; redraw(); return; }
+          }
+        } catch (e) {}
+        // nothing loaded
+        actions = [];
+        undone = [];
+        redraw();
+      } catch (e) {
+        warn('loadSaved error', e);
+        actions = [];
+        undone = [];
+        redraw();
+      }
+    }
 
+    // send snapshot + structured data into chat
     function sendToChat() {
       try {
-        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H; const oc = off.getContext('2d'); oc.fillStyle = '#ffffff'; oc.fillRect(0,0,off.width,off.height); for (let i=0;i<actions.length;i++) renderAction(oc, actions[i]); const dataUrl = off.toDataURL('image/png'); const message = { id: Date.now(), sender: 'user', text: '', timestamp: new Date(), image: dataUrl, drawingData: JSON.parse(JSON.stringify(actions||[])), status: 'sent', type: 'drawing' };
-        if (typeof addMessage === 'function') { try { addMessage(message); } catch (e) { warn('addMessage threw', e); fallbackPush(message); } } else { fallbackPush(message); }
-        scheduleSave(); maybePartnerReply();
+        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
+        const oc = off.getContext('2d'); oc.fillStyle = '#ffffff'; oc.fillRect(0,0,off.width,off.height);
+        for (let i=0;i<actions.length;i++) renderAction(oc, actions[i]);
+        const dataUrl = off.toDataURL('image/png');
+
+        const message = { id: Date.now(), sender: 'user', text: '', timestamp: new Date(), image: dataUrl, drawingData: JSON.parse(JSON.stringify(actions||[])), status: 'sent', type: 'drawing' };
+        if (typeof addMessage === 'function') {
+          try { addMessage(message); } catch (e) { warn('addMessage threw', e); fallbackPush(message); }
+        } else {
+          fallbackPush(message);
+        }
+        scheduleSave();
+        maybePartnerReply();
       } catch (e) { err('sendToChat failed', e); }
     }
 
-    function fallbackPush(msg) { try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('message pushed; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); } }
+    function fallbackPush(msg) {
+      try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('fallback pushed message; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); }
+    }
 
-    function weightedChoice(items, weights) { const total = weights.reduce((s,w)=>s+w,0); let r = Math.random()*total; for (let i=0;i<items.length;i++){ r -= weights[i]; if (r <= 0) return items[i]; } return items[items.length-1]; }
-    function randomDoodleActions() { const count = PARTNER_MIN_OBJ + Math.floor(Math.random() * (PARTNER_MAX_OBJ - PARTNER_MIN_OBJ + 1)); const acts = []; for (let i=0;i<count;i++){ const kind = weightedChoice(['stroke','line','circle','rect','polygon'], [40,20,15,15,10]); if (kind === 'stroke') { let x = randRange(40, CANVAS_W-40), y = randRange(40, CANVAS_H-40); const pts=[]; const n=4+Math.floor(Math.random()*18); for (let j=0;j<n;j++){ x += randRange(-40,40); y += randRange(-40,40); x = clamp(x,10,CANVAS_W-10); y = clamp(y,10,CANVAS_H-10); pts.push({x,y}); } acts.push({ type:'stroke', mode:'brush', color: randomHsl(), width: 1 + Math.floor(Math.random()*8), points: pts }); } else if (kind === 'line') { acts.push({ type:'line', x1:randRange(10,CANVAS_W-10), y1:randRange(10,CANVAS_H-10), x2:randRange(10,CANVAS_W-10), y2:randRange(10,CANVAS_H-10), color: randomHsl(), width: 1 + Math.floor(Math.random()*6) }); } else if (kind === 'circle') { const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(8, Math.min(140, CANVAS_W/3)); acts.push({ type:'circle', cx,cy,r, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } else if (kind === 'rect') { const x=randRange(10,CANVAS_W-140), y=randRange(10,CANVAS_H-140), w=randRange(20,180), h=randRange(20,180); acts.push({ type:'rect', x,y,w,h, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } else if (kind === 'polygon') { const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(12,120), sides = 3 + Math.floor(Math.random()*6); acts.push({ type:'polygon', cx,cy,r,sides, rotation:Math.random()*Math.PI*2, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } } return acts; }
-    function maybePartnerReply() { if (Math.random() > PARTNER_REPLY_PROB) return; const delay = 800 + Math.random() * 2200; setTimeout(() => { const acts = randomDoodleActions(); const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H; const oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0,0,off.width,off.height); for (let i=0;i<acts.length;i++) renderAction(oc, acts[i]); const url = off.toDataURL('image/png'); const msg = { id: Date.now()+1, sender:'partner', text:'', timestamp: new Date(), image: url, drawingData: acts, status: 'sent', type: 'drawing' }; if (typeof addMessage === 'function') { try { addMessage(msg); } catch (e) { warn('addMessage partner failed', e); fallbackPush(msg); } } else fallbackPush(msg); }, delay); }
+    function weightedChoice(items, weights) {
+      const total = weights.reduce((s,w)=>s+w,0);
+      let r = Math.random()*total;
+      for (let i=0;i<items.length;i++){ r -= weights[i]; if (r <= 0) return items[i]; }
+      return items[items.length-1];
+    }
+    function randomDoodleActions() {
+      const count = PARTNER_MIN_OBJ + Math.floor(Math.random() * (PARTNER_MAX_OBJ - PARTNER_MIN_OBJ + 1));
+      const acts = [];
+      for (let i=0;i<count;i++){
+        const kind = weightedChoice(['stroke','line','circle','rect','polygon'], [40,20,15,15,10]);
+        if (kind === 'stroke') {
+          let x = randRange(40, CANVAS_W-40), y = randRange(40, CANVAS_H-40);
+          const pts = []; const n = 4 + Math.floor(Math.random()*18);
+          for (let j=0;j<n;j++){ x += randRange(-40,40); y += randRange(-40,40); x = clamp(x,10,CANVAS_W-10); y = clamp(y,10,CANVAS_H-10); pts.push({x,y}); }
+          acts.push({ type:'stroke', mode:'brush', color: randomHsl(), width: 1 + Math.floor(Math.random()*8), points: pts });
+        } else if (kind === 'line') {
+          acts.push({ type:'line', x1:randRange(10,CANVAS_W-10), y1:randRange(10,CANVAS_H-10), x2:randRange(10,CANVAS_W-10), y2:randRange(10,CANVAS_H-10), color: randomHsl(), width:1 + Math.floor(Math.random()*6) });
+        } else if (kind === 'circle') {
+          const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(8, Math.min(140, CANVAS_W/3));
+          acts.push({ type:'circle', cx,cy,r, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
+        } else if (kind === 'rect') {
+          const x=randRange(10,CANVAS_W-140), y=randRange(10,CANVAS_H-140), w=randRange(20,180), h=randRange(20,180);
+          acts.push({ type:'rect', x,y,w,h, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
+        } else if (kind === 'polygon') {
+          const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(12,120), sides = 3 + Math.floor(Math.random()*6);
+          acts.push({ type:'polygon', cx,cy,r,sides, rotation: Math.random()*Math.PI*2, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
+        }
+      }
+      return acts;
+    }
+
+    function maybePartnerReply() {
+      if (Math.random() > PARTNER_REPLY_PROB) return;
+      const delay = 800 + Math.random()*2200;
+      setTimeout(() => {
+        const acts = randomDoodleActions();
+        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
+        const oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0,0,off.width,off.height);
+        for (let i=0;i<acts.length;i++) renderAction(oc, acts[i]);
+        const url = off.toDataURL('image/png');
+        const msg = { id: Date.now()+1, sender:'partner', text:'', timestamp: new Date(), image: url, drawingData: acts, status: 'sent', type: 'drawing' };
+        if (typeof addMessage === 'function') {
+          try { addMessage(msg); } catch (e) { warn('addMessage partner failed', e); fallbackPush(msg); }
+        } else fallbackPush(msg);
+      }, delay);
+    }
 
     function wireUI(ui) {
       try {
-        ui.toolButtons.forEach(btn => btn.addEventListener('click', ()=> { ui.toolButtons.forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTool = btn.dataset.tool || 'brush'; }));
+        ui.toolButtons.forEach(btn => btn.addEventListener('click', ()=> {
+          ui.toolButtons.forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTool = btn.dataset.tool || 'brush';
+        }));
         ui.colorInput && ui.colorInput.addEventListener('input', (e)=> { currentColor = e.target.value; });
         ui.sizeInput && ui.sizeInput.addEventListener('input', (e)=> { currentSize = parseInt(e.target.value,10) || 4; });
         ui.polyInput && ui.polyInput.addEventListener('change', (e)=> { polySides = Math.max(3, Math.min(12, parseInt(e.target.value,10)||5)); });
@@ -357,42 +560,56 @@
       } catch (e) { warn('wireUI failed', e); }
     }
 
-    function init() { setResolution(); attachEvents(); wireUI(ui); return loadSaved().then(()=> redraw()).catch(()=> redraw()); }
-    function draw() { redraw(); }
-
-    return { init, draw, undo, clearAll, sendToChat };
+    // public API
+    return {
+      init: function() { setResolution(); attachEvents(); wireUI(ui); return loadSaved(); },
+      redraw: redraw,
+      undo,
+      clearAll,
+      sendToChat
+    };
   }
 
-  // ---------- Helpers ----------
-  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-  function randRange(a,b){ return a + Math.random()*(b-a); }
-  function randomHsl(){ const h=Math.floor(Math.random()*360), s=50+Math.floor(Math.random()*30), l=30+Math.floor(Math.random()*30); return `hsl(${h} ${s}% ${l}%)`; }
-  function randomTranslucent(){ const h=Math.floor(Math.random()*360), s=50+Math.floor(Math.random()*30), l=30+Math.floor(Math.random()*30), a=(0.12+Math.random()*0.6).toFixed(2); return `hsla(${h}, ${s}%, ${l}%, ${a})`; }
-
+  // Expose fallback push for engine use
   function fallbackPush(msg) {
     try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('fallback pushed message; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); }
   }
 
-  // ---------- Startup ----------
+  // Startup orchestration: build UI, create engine, migrate when session ready
   function ready(fn) {
     if (document.readyState === 'complete' || document.readyState === 'interactive') setTimeout(fn, 20);
     else document.addEventListener('DOMContentLoaded', fn, { once: true });
   }
 
-  ready(() => {
+  ready(async () => {
     try {
       const ui = buildUI();
       if (!ui || !ui.canvas) { warn('UI build failed'); return; }
       ui.launcher.addEventListener('click', ()=> { ui.panel.style.display = (ui.panel.style.display === 'block') ? 'none' : 'block'; });
+
+      // Attempt migration when SESSION_ID becomes ready (non-blocking)
+      whenSessionReadyThenMigrate().then(()=> {
+        // after migration attempt, continue (engine will load saved from effective key)
+      }).catch(e=> warn('session migration error', e));
+
+      // Create engine with the UI object closure variable available (engine uses effectiveKey() each save)
       const engine = createEngine(ui);
-      if (engine && typeof engine.init === 'function') engine.init();
+      if (engine && typeof engine.init === 'function') {
+        engine.init().then(()=> {
+          log('Draw Together initialized and canvas loaded.');
+        }).catch(e => { warn('engine.init failed', e); });
+      }
+
       window.__drawTogether = window.__drawTogether || {};
       window.__drawTogether.engine = engine;
-      log('Draw Together ready (storage calls guarded against missing SESSION_ID).');
-    } catch (e) { err('Draw Together startup error', e && e.stack ? e.stack : e); }
+
+      log('Draw Together ready (will migrate fallback storage when SESSION_ID becomes available).');
+    } catch (e) {
+      err('Draw Together startup error', e && e.stack ? e.stack : e);
+    }
   });
 
-  // expose manual init for debugging
+  // Manual init for debugging
   window.drawTogetherInit = function(){ try { const ui = buildUI(); const engine = createEngine(ui); engine && engine.init(); } catch(e){ err('manual init failed', e); } };
 
 })();
