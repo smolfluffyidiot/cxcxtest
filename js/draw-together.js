@@ -293,177 +293,59 @@
     function onDown(e) {
       try { e.preventDefault && e.preventDefault(); } catch (_) {}
       const p = clientToCanvas(e);
-      isDrawing = true;
-      startPos = p;
-      tempShape = null;
+      isDrawing = true; startPos = p; tempShape = null;
       if (currentTool === 'brush' || currentTool === 'eraser') {
         currentStroke = { type:'stroke', mode: currentTool === 'eraser' ? 'eraser' : 'brush', color: currentColor, width: currentSize, points: [p] };
-        actions.push(currentStroke);
-        scheduleSave();
-        redraw();
+        actions.push(currentStroke); scheduleSave(); redraw();
       }
     }
     function onMove(e) {
-      if (!isDrawing) return;
-      const p = clientToCanvas(e);
-      if (currentTool === 'brush' || currentTool === 'eraser') {
-        if (!currentStroke) return;
-        currentStroke.points.push(p);
-        redraw();
-      } else if (currentTool === 'line') {
-        tempShape = { type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize };
-        redraw();
-      } else if (currentTool === 'circle') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        tempShape = { type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize };
-        redraw();
-      } else if (currentTool === 'rect') {
-        const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y);
-        tempShape = { type:'rect', x, y, w, h, color: currentColor, width: currentSize };
-        redraw();
-      } else if (currentTool === 'polygon') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        tempShape = { type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize };
-        redraw();
-      }
+      if (!isDrawing) return; const p = clientToCanvas(e);
+      if (currentTool === 'brush' || currentTool === 'eraser') { if (!currentStroke) return; currentStroke.points.push(p); redraw(); }
+      else if (currentTool === 'line') { tempShape = { type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }; redraw(); }
+      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); tempShape = { type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }; redraw(); }
+      else if (currentTool === 'rect') { const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y); tempShape = { type:'rect', x, y, w, h, color: currentColor, width: currentSize }; redraw(); }
+      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); tempShape = { type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }; redraw(); }
     }
     function onUp(e) {
-      if (!isDrawing) return;
-      isDrawing = false;
-      const p = clientToCanvas(e);
-      if (currentTool === 'brush' || currentTool === 'eraser') {
-        currentStroke = null; scheduleSave();
-      } else if (currentTool === 'line') {
-        pushAction({ type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize });
-      } else if (currentTool === 'circle') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        pushAction({ type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize });
-      } else if (currentTool === 'rect') {
-        const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y);
-        pushAction({ type:'rect', x, y, w, h, color: currentColor, width: currentSize });
-      } else if (currentTool === 'polygon') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        pushAction({ type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize });
-      }
+      if (!isDrawing) return; isDrawing = false; const p = clientToCanvas(e);
+      if (currentTool === 'brush' || currentTool === 'eraser') { currentStroke = null; scheduleSave(); }
+      else if (currentTool === 'line') { pushAction({ type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }); }
+      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }); }
+      else if (currentTool === 'rect') { const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y); pushAction({ type:'rect', x, y, w, h, color: currentColor, width: currentSize }); }
+      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }); }
       tempShape = null; startPos = null; redraw();
     }
 
     function attachEvents() {
       try {
-        if (window.PointerEvent) {
-          canvas.addEventListener('pointerdown', onDown);
-          canvas.addEventListener('pointermove', onMove);
-          window.addEventListener('pointerup', onUp);
-        } else {
-          canvas.addEventListener('mousedown', onDown);
-          canvas.addEventListener('mousemove', onMove);
-          window.addEventListener('mouseup', onUp);
-          canvas.addEventListener('touchstart', onDown, { passive:false });
-          canvas.addEventListener('touchmove', onMove, { passive:false });
-          window.addEventListener('touchend', onUp);
-        }
+        if (window.PointerEvent) { canvas.addEventListener('pointerdown', onDown); canvas.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); }
+        else { canvas.addEventListener('mousedown', onDown); canvas.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); canvas.addEventListener('touchstart', onDown, { passive:false }); canvas.addEventListener('touchmove', onMove, { passive:false }); window.addEventListener('touchend', onUp); }
       } catch (e) { warn('attachEvents failed', e); }
     }
 
-    function loadSaved() {
-      return loadItem(storageKey()).then(payload => {
-        try {
-          if (payload && Array.isArray(payload.actions)) actions = payload.actions.slice();
-          else actions = [];
-        } catch (e) { actions = []; }
-        undone = [];
-        redraw();
-      }).catch(e => { warn('loadSaved error', e); actions = []; redraw(); });
-    }
+    function loadSaved() { return loadItem(storageKey()).then(payload => {
+      try { if (payload && Array.isArray(payload.actions)) actions = payload.actions.slice(); else actions = []; } catch(e){ actions = []; }
+      undone = []; redraw();
+    }).catch(e=>{ warn('loadSaved error', e); actions = []; redraw(); }); }
 
-    // Snapshot + send
     function sendToChat() {
       try {
-        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
-        const oc = off.getContext('2d'); oc.fillStyle = '#ffffff'; oc.fillRect(0,0,off.width,off.height);
-        for (let i=0;i<actions.length;i++) renderAction(oc, actions[i]);
-        const dataUrl = off.toDataURL('image/png');
-        const message = {
-          id: Date.now(),
-          sender: 'user',
-          text: '',
-          timestamp: new Date(),
-          image: dataUrl,
-          drawingData: JSON.parse(JSON.stringify(actions || [])),
-          status: 'sent',
-          type: 'drawing'
-        };
-        if (typeof addMessage === 'function') {
-          try { addMessage(message); } catch (e) { warn('addMessage threw', e); fallbackPush(message); }
-        } else {
-          fallbackPush(message);
-        }
-        scheduleSave();
-        maybePartnerReply();
+        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H; const oc = off.getContext('2d'); oc.fillStyle = '#ffffff'; oc.fillRect(0,0,off.width,off.height); for (let i=0;i<actions.length;i++) renderAction(oc, actions[i]); const dataUrl = off.toDataURL('image/png'); const message = { id: Date.now(), sender: 'user', text: '', timestamp: new Date(), image: dataUrl, drawingData: JSON.parse(JSON.stringify(actions||[])), status: 'sent', type: 'drawing' };
+        if (typeof addMessage === 'function') { try { addMessage(message); } catch (e) { warn('addMessage threw', e); fallbackPush(message); } } else { fallbackPush(message); }
+        scheduleSave(); maybePartnerReply();
       } catch (e) { err('sendToChat failed', e); }
     }
 
-    function fallbackPush(msg) {
-      try {
-        window.messages = window.messages || [];
-        window.messages.push(msg);
-        if (typeof renderMessages === 'function') renderMessages();
-        else log('message pushed; renderMessages not available');
-      } catch (e) { warn('fallbackPush failed', e); }
-    }
+    function fallbackPush(msg) { try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('message pushed; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); } }
 
-    function weightedChoice(items, weights) {
-      const total = weights.reduce((s,w)=>s+w,0);
-      let r = Math.random()*total;
-      for (let i=0;i<items.length;i++){ r -= weights[i]; if (r <= 0) return items[i]; }
-      return items[items.length-1];
-    }
-    function randomDoodleActions() {
-      const count = PARTNER_MIN_OBJ + Math.floor(Math.random() * (PARTNER_MAX_OBJ - PARTNER_MIN_OBJ + 1));
-      const acts = [];
-      for (let i=0;i<count;i++){
-        const kind = weightedChoice(['stroke','line','circle','rect','polygon'], [40,20,15,15,10]);
-        if (kind === 'stroke') {
-          let x = randRange(40, CANVAS_W-40), y = randRange(40, CANVAS_H-40);
-          const pts = []; const n = 4 + Math.floor(Math.random()*18);
-          for (let j=0;j<n;j++){ x += randRange(-40,40); y += randRange(-40,40); x = clamp(x, 10, CANVAS_W-10); y = clamp(y, 10, CANVAS_H-10); pts.push({x,y}); }
-          acts.push({ type:'stroke', mode:'brush', color: randomHsl(), width: 1 + Math.floor(Math.random()*8), points: pts });
-        } else if (kind === 'line') {
-          acts.push({ type:'line', x1:randRange(10,CANVAS_W-10), y1:randRange(10,CANVAS_H-10), x2:randRange(10,CANVAS_W-10), y2:randRange(10,CANVAS_H-10), color: randomHsl(), width: 1 + Math.floor(Math.random()*6) });
-        } else if (kind === 'circle') {
-          const cx = randRange(40,CANVAS_W-40), cy = randRange(40,CANVAS_H-40), r = randRange(8, Math.min(140, CANVAS_W/3));
-          acts.push({ type:'circle', cx, cy, r, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null });
-        } else if (kind === 'rect') {
-          const x = randRange(10,CANVAS_W-140), y=randRange(10,CANVAS_H-140), w = randRange(20,180), h = randRange(20,180);
-          acts.push({ type:'rect', x,y,w,h, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null });
-        } else if (kind === 'polygon') {
-          const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(12,120), sides = 3 + Math.floor(Math.random()*6);
-          acts.push({ type:'polygon', cx,cy,r,sides,rotation:Math.random()*Math.PI*2, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null });
-        }
-      }
-      return acts;
-    }
-    function maybePartnerReply() {
-      if (Math.random() > PARTNER_REPLY_PROB) return;
-      const delay = 800 + Math.random() * 2200;
-      setTimeout(() => {
-        const acts = randomDoodleActions();
-        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
-        const oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0,0,off.width,off.height);
-        for (let i=0;i<acts.length;i++) renderAction(oc, acts[i]);
-        const url = off.toDataURL('image/png');
-        const msg = { id: Date.now()+1, sender:'partner', text:'', timestamp: new Date(), image: url, drawingData: acts, status: 'sent', type: 'drawing' };
-        if (typeof addMessage === 'function') { try { addMessage(msg); } catch (e) { warn('addMessage partner failed', e); fallbackPush(msg); } } else fallbackPush(msg);
-      }, delay);
-    }
+    function weightedChoice(items, weights) { const total = weights.reduce((s,w)=>s+w,0); let r = Math.random()*total; for (let i=0;i<items.length;i++){ r -= weights[i]; if (r <= 0) return items[i]; } return items[items.length-1]; }
+    function randomDoodleActions() { const count = PARTNER_MIN_OBJ + Math.floor(Math.random() * (PARTNER_MAX_OBJ - PARTNER_MIN_OBJ + 1)); const acts = []; for (let i=0;i<count;i++){ const kind = weightedChoice(['stroke','line','circle','rect','polygon'], [40,20,15,15,10]); if (kind === 'stroke') { let x = randRange(40, CANVAS_W-40), y = randRange(40, CANVAS_H-40); const pts=[]; const n=4+Math.floor(Math.random()*18); for (let j=0;j<n;j++){ x += randRange(-40,40); y += randRange(-40,40); x = clamp(x,10,CANVAS_W-10); y = clamp(y,10,CANVAS_H-10); pts.push({x,y}); } acts.push({ type:'stroke', mode:'brush', color: randomHsl(), width: 1 + Math.floor(Math.random()*8), points: pts }); } else if (kind === 'line') { acts.push({ type:'line', x1:randRange(10,CANVAS_W-10), y1:randRange(10,CANVAS_H-10), x2:randRange(10,CANVAS_W-10), y2:randRange(10,CANVAS_H-10), color: randomHsl(), width: 1 + Math.floor(Math.random()*6) }); } else if (kind === 'circle') { const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(8, Math.min(140, CANVAS_W/3)); acts.push({ type:'circle', cx,cy,r, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } else if (kind === 'rect') { const x=randRange(10,CANVAS_W-140), y=randRange(10,CANVAS_H-140), w=randRange(20,180), h=randRange(20,180); acts.push({ type:'rect', x,y,w,h, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } else if (kind === 'polygon') { const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(12,120), sides = 3 + Math.floor(Math.random()*6); acts.push({ type:'polygon', cx,cy,r,sides, rotation:Math.random()*Math.PI*2, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random() < 0.35 ? randomTranslucent() : null }); } } return acts; }
+    function maybePartnerReply() { if (Math.random() > PARTNER_REPLY_PROB) return; const delay = 800 + Math.random() * 2200; setTimeout(() => { const acts = randomDoodleActions(); const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H; const oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0,0,off.width,off.height); for (let i=0;i<acts.length;i++) renderAction(oc, acts[i]); const url = off.toDataURL('image/png'); const msg = { id: Date.now()+1, sender:'partner', text:'', timestamp: new Date(), image: url, drawingData: acts, status: 'sent', type: 'drawing' }; if (typeof addMessage === 'function') { try { addMessage(msg); } catch (e) { warn('addMessage partner failed', e); fallbackPush(msg); } } else fallbackPush(msg); }, delay); }
 
-    // UI wire (connect controls to engine variables)
     function wireUI(ui) {
       try {
-        ui.toolButtons.forEach(btn => btn.addEventListener('click', ()=> {
-          ui.toolButtons.forEach(b => b.classList.remove('active')); btn.classList.add('active');
-          currentTool = btn.dataset.tool || 'brush';
-        }));
+        ui.toolButtons.forEach(btn => btn.addEventListener('click', ()=> { ui.toolButtons.forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTool = btn.dataset.tool || 'brush'; }));
         ui.colorInput && ui.colorInput.addEventListener('input', (e)=> { currentColor = e.target.value; });
         ui.sizeInput && ui.sizeInput.addEventListener('input', (e)=> { currentSize = parseInt(e.target.value,10) || 4; });
         ui.polyInput && ui.polyInput.addEventListener('change', (e)=> { polySides = Math.max(3, Math.min(12, parseInt(e.target.value,10)||5)); });
@@ -475,18 +357,10 @@
       } catch (e) { warn('wireUI failed', e); }
     }
 
-    // public init
-    function init() { setResolution(); attachEvents(); wireUI(ui); return loadSaved().then(()=>draw()).catch(()=>draw()); }
-    function draw(){ redraw(); }
+    function init() { setResolution(); attachEvents(); wireUI(ui); return loadSaved().then(()=> redraw()).catch(()=> redraw()); }
+    function draw() { redraw(); }
 
-    // expose a minimal API
-    return {
-      init,
-      draw,
-      undo,
-      clearAll,
-      sendToChat
-    };
+    return { init, draw, undo, clearAll, sendToChat };
   }
 
   // ---------- Helpers ----------
@@ -496,12 +370,7 @@
   function randomTranslucent(){ const h=Math.floor(Math.random()*360), s=50+Math.floor(Math.random()*30), l=30+Math.floor(Math.random()*30), a=(0.12+Math.random()*0.6).toFixed(2); return `hsla(${h}, ${s}%, ${l}%, ${a})`; }
 
   function fallbackPush(msg) {
-    try {
-      window.messages = window.messages || [];
-      window.messages.push(msg);
-      if (typeof renderMessages === 'function') renderMessages();
-      else log('fallback pushed message; renderMessages missing');
-    } catch (e) { warn('fallbackPush failed', e); }
+    try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('fallback pushed message; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); }
   }
 
   // ---------- Startup ----------
@@ -514,22 +383,13 @@
     try {
       const ui = buildUI();
       if (!ui || !ui.canvas) { warn('UI build failed'); return; }
-      // toggle panel via launcher
-      ui.launcher.addEventListener('click', ()=> {
-        ui.panel.style.display = (ui.panel.style.display === 'block') ? 'none' : 'block';
-      });
-
-      // create engine (use createEngine defined above)
+      ui.launcher.addEventListener('click', ()=> { ui.panel.style.display = (ui.panel.style.display === 'block') ? 'none' : 'block'; });
       const engine = createEngine(ui);
       if (engine && typeof engine.init === 'function') engine.init();
-
       window.__drawTogether = window.__drawTogether || {};
       window.__drawTogether.engine = engine;
-
       log('Draw Together ready (storage calls guarded against missing SESSION_ID).');
-    } catch (e) {
-      err('Draw Together startup error', e && e.stack ? e.stack : e);
-    }
+    } catch (e) { err('Draw Together startup error', e && e.stack ? e.stack : e); }
   });
 
   // expose manual init for debugging
