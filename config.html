@@ -2056,7 +2056,7 @@
     
             <div class="draw-title">
               <span>🎨</span>
-              <span>Draw Together</span>
+              <span>画布</span>
             </div>
     
             <div class="draw-header-buttons">
@@ -2065,16 +2065,18 @@
                 type="button"
                 id="draw-send"
                 class="modal-btn modal-btn-primary"
+                onclick="window.drawTogether.sendDrawing();"
               >
-                Send to Partner
+                发送
               </button>
     
               <button
                 type="button"
                 id="draw-close"
                 class="modal-btn modal-btn-secondary"
+                onclick="window.drawTogether.close();"
               >
-                Close
+                关闭
               </button>
     
             </div>
@@ -2115,7 +2117,7 @@
                     data-tool="brush"
                   >
                     ✏️
-                    <span>Brush</span>
+                    <span>画笔</span>
                   </button>
     
                   <button
@@ -2124,7 +2126,7 @@
                     data-tool="eraser"
                   >
                     🧹
-                    <span>Eraser</span>
+                    <span>橡皮擦</span>
                   </button>
     
                   <button
@@ -2133,7 +2135,7 @@
                     data-tool="line"
                   >
                     ╱
-                    <span>Line</span>
+                    <span>直线</span>
                   </button>
     
                   <button
@@ -2142,7 +2144,7 @@
                     data-tool="rect"
                   >
                     ▭
-                    <span>Rect</span>
+                    <span>方形</span>
                   </button>
     
                   <button
@@ -2151,7 +2153,7 @@
                     data-tool="circle"
                   >
                     ○
-                    <span>Circle</span>
+                    <span>圆形</span>
                   </button>
     
                   <button
@@ -2160,7 +2162,7 @@
                     data-tool="polygon"
                   >
                     ⬡
-                    <span>Polygon</span>
+                    <span>多边形</span>
                   </button>
     
                 </div>
@@ -2173,7 +2175,7 @@
     
                 <div class="draw-control">
     
-                  <span>Color</span>
+                  <span>颜色</span>
     
                   <input
                     id="draw-color"
@@ -2186,7 +2188,7 @@
     
                 <div class="draw-control draw-size-control">
     
-                  <span>Size</span>
+                  <span>大小</span>
     
                   <input
                     id="draw-size"
@@ -2205,7 +2207,7 @@
     
                 <div class="draw-control">
     
-                  <span>Sides</span>
+                  <span>边数</span>
     
                   <input
                     id="draw-sides"
@@ -2228,7 +2230,7 @@
                   id="draw-undo"
                   class="modal-btn"
                 >
-                  ↶ Undo
+                  ↶ 撤销
                 </button>
     
                 <button
@@ -2236,7 +2238,7 @@
                   id="draw-clear"
                   class="modal-btn"
                 >
-                  🗑 Clear
+                  🗑 清空
                 </button>
     
                 <button
@@ -2244,7 +2246,7 @@
                   id="draw-new"
                   class="modal-btn"
                 >
-                  ✨ New Drawing
+                  ✨ 新画布
                 </button>
     
               </div>
