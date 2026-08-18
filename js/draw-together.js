@@ -1205,52 +1205,50 @@
     // OPEN / CLOSE MODAL
     // =====================================================
 
-    function openModal() {
-
-        const modal =
-            document.getElementById(
-                'canvas-modal'
-            );
-
-        if (!modal) {
-
-            error(
-                '#canvas-modal not found'
-            );
-
-            return;
-        }
-
-        if (!setupCanvas()) {
-            return;
-        }
-
-        setupCanvasEvents();
-
-        setupToolbar();
-
-        modal.style.display =
-            'flex';
-
-        modal.style.visibility =
-            'visible';
-
-        modal.style.opacity =
-            '1';
-
-        /*
-         * Your modal already has z-index:2200,
-         * so don't create another overlay.
-         */
-        modal.style.zIndex =
-            '999999';
-
-        redraw();
-
-        log(
-            'Modal opened'
-        );
-    }
+      function openModal() {
+   
+       const modal = document.getElementById('canvas-modal');
+   
+       if (!modal) {
+           error('#canvas-modal not found');
+           return;
+       }
+   
+       if (!setupCanvas()) {
+           return;
+       }
+   
+       setupCanvasEvents();
+       setupToolbar();
+   
+       // Open the existing modal directly
+       modal.style.display = 'flex';
+       modal.style.visibility = 'visible';
+       modal.style.opacity = '1';
+   
+       // Keep it above all other UI
+       modal.style.zIndex = '999999';
+   
+       // Prevent modal itself from creating/receiving blur
+       modal.style.filter = 'none';
+       modal.style.backdropFilter = 'none';
+       modal.style.webkitBackdropFilter = 'none';
+       modal.style.transform = 'none';
+   
+       const content = modal.querySelector('.modal-content');
+   
+       if (content) {
+           content.style.filter = 'none';
+           content.style.backdropFilter = 'none';
+           content.style.webkitBackdropFilter = 'none';
+           content.style.transform = 'none';
+           content.style.opacity = '1';
+       }
+   
+       redraw();
+   
+       log('Modal opened');
+   }
 
     function closeModal() {
 
