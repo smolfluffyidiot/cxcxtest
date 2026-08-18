@@ -37,7 +37,7 @@
      *
      * 0.05 = 5%
      */
-    const PARTNER_DRAW_CHANCE = 0.05;
+    const PARTNER_DRAW_CHANCE = 1;
 
     const PARTNER_MIN_OBJECTS = 2;
     const PARTNER_MAX_OBJECTS = 8;
