@@ -1566,203 +1566,157 @@
     // BUTTON EVENTS
     // =====================================================
 
-   function setupButtons() {
-
-    // =============================================
-    // SEND
-    // =============================================
-
-    if (!window.__drawTogetherSendHandler) {
-
-        window.__drawTogetherSendHandler = true;
-
-        document.addEventListener(
-            'click',
-            function (event) {
-
-                const button =
-                    event.target.closest('#draw-send');
-
-                if (!button) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                console.log(
-                    '[DrawTogether] Send button clicked'
-                );
-
-                sendDrawingToChat();
-
-            },
-            true
-        );
-    }
-
-
-    // =============================================
-    // CLOSE
-    // =============================================
-
-    if (!window.__drawTogetherCloseHandler) {
-
-        window.__drawTogetherCloseHandler = true;
-
-        document.addEventListener(
-            'click',
-            function (event) {
-
-                const button =
-                    event.target.closest('#draw-close');
-
-                if (!button) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                console.log(
-                    '[DrawTogether] Close button clicked'
-                );
-
-                closeModal();
-
-            },
-            true
-        );
-    }
-
-
-    // =============================================
-    // UNDO
-    // =============================================
-
-    if (!window.__drawTogetherUndoHandler) {
-
-        window.__drawTogetherUndoHandler = true;
-
-        document.addEventListener(
-            'click',
-            function (event) {
-
-                const button =
-                    event.target.closest('#draw-undo');
-
-                if (!button) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                undoDrawing();
-
-            },
-            true
-        );
-    }
-
-
-    // =============================================
-    // CLEAR
-    // =============================================
-
-    if (!window.__drawTogetherClearHandler) {
-
-        window.__drawTogetherClearHandler = true;
-
-        document.addEventListener(
-            'click',
-            function (event) {
-
-                const button =
-                    event.target.closest('#draw-clear');
-
-                if (!button) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                if (confirm('Clear canvas?')) {
-                    clearDrawing();
-                }
-
-            },
-            true
-        );
-    }
-
-
-    // =============================================
-    // NEW
-    // =============================================
-
-    if (!window.__drawTogetherNewHandler) {
-
-        window.__drawTogetherNewHandler = true;
-
-        document.addEventListener(
-            'click',
-            function (event) {
-
-                const button =
-                    event.target.closest('#draw-new');
-
-                if (!button) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                if (confirm('New canvas?')) {
-                    clearDrawing();
-                }
-
-            },
-            true
-        );
-    }
-}
-
+    function setupButtons() {
 
         // ---------------------------------------------
-        // New
+        // Send
         // ---------------------------------------------
 
-        if (
-            !window.__drawTogetherNewHandler
-        ) {
+        if (!window.__drawTogetherSendHandler) {
 
-            window.__drawTogetherNewHandler =
-                true;
+            window.__drawTogetherSendHandler = true;
 
             document.addEventListener(
                 'click',
                 function (event) {
 
                     const button =
-                        event.target.closest(
-                            '#canvas-new'
-                        );
+                        event.target.closest('#draw-send');
 
                     if (!button) {
                         return;
                     }
 
                     event.preventDefault();
+                    event.stopPropagation();
 
-                    if (
-                        confirm(
-                            'New canvas?'
-                        )
-                    ) {
+                    console.log(
+                        '[DrawTogether] Send button clicked'
+                    );
 
+                    sendDrawingToChat();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Close
+        // ---------------------------------------------
+
+        if (!window.__drawTogetherCloseHandler) {
+
+            window.__drawTogetherCloseHandler = true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest('#draw-close');
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    console.log(
+                        '[DrawTogether] Close button clicked'
+                    );
+
+                    closeModal();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Undo
+        // ---------------------------------------------
+
+        if (!window.__drawTogetherUndoHandler) {
+
+            window.__drawTogetherUndoHandler = true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest('#draw-undo');
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    undoDrawing();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Clear
+        // ---------------------------------------------
+
+        if (!window.__drawTogetherClearHandler) {
+
+            window.__drawTogetherClearHandler = true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest('#draw-clear');
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    if (confirm('Clear canvas?')) {
+                        clearDrawing();
+                    }
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // New
+        // ---------------------------------------------
+
+        if (!window.__drawTogetherNewHandler) {
+
+            window.__drawTogetherNewHandler = true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest('#draw-new');
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    if (confirm('New canvas?')) {
                         clearDrawing();
                     }
 
@@ -1771,6 +1725,11 @@
             );
         }
     }
+
+    // =====================================================
+    // PARTNER RANDOM DRAWING
+    // =====================================================
+
 
     // =====================================================
     // PARTNER RANDOM DRAWING
