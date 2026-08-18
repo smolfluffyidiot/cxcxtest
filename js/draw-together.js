@@ -1568,38 +1568,44 @@
 
     function setupButtons() {
 
-        // ---------------------------------------------
-        // Send
-        // ---------------------------------------------
-
-        if (!window.__drawTogetherSendHandler) {
-
-            window.__drawTogetherSendHandler = true;
-
-            document.addEventListener(
-                'click',
-                function (event) {
-
-                    const button =
-                        event.target.closest('#draw-send');
-
-                    if (!button) {
-                        return;
-                    }
-
-                    event.preventDefault();
-                    event.stopPropagation();
-
-                    console.log(
-                        '[DrawTogether] Send button clicked'
-                    );
-
-                    sendDrawingToChat();
-
-                },
-                true
-            );
-        }
+        // =============================================
+      // SEND BUTTON
+      // =============================================
+      
+      if (!window.__drawTogetherSendHandler) {
+      
+          window.__drawTogetherSendHandler = true;
+      
+          document.addEventListener(
+              'click',
+              function (event) {
+      
+                  const button = event.target.closest(
+                      '#draw-send, #canvas-send-to-chat'
+                  );
+      
+                  if (!button) {
+                      return;
+                  }
+      
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+      
+                  console.log(
+                      '[DrawTogether] SEND BUTTON CLICKED'
+                  );
+      
+                  // Make the existing chat function available
+                  if (typeof addMessage === 'function') {
+                      window.addMessage = addMessage;
+                  }
+      
+                  sendDrawingToChat();
+      
+              },
+              true
+          );
+      }
 
         // ---------------------------------------------
         // Close
@@ -1725,11 +1731,6 @@
             );
         }
     }
-
-    // =====================================================
-    // PARTNER RANDOM DRAWING
-    // =====================================================
-
 
     // =====================================================
     // PARTNER RANDOM DRAWING
