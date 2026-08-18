@@ -1706,7 +1706,7 @@
                         <i class="fas fa-book"></i><span>陪伴日记</span>
                     </div>
                     <!-- Draw Together button -->
-                    <div class="settings-item" id="open-draw-together" title="画布" style="cursor:pointer;">
+                    <div class="settings-item" id="open-draw-together" title="画布" style="cursor:pointer;" onclick="window.drawTogether && window.drawTogether.open()">
                       <i class="fas fa-paint-brush"></i>
                       <span>画布</span>
                     </div>
@@ -2037,7 +2037,7 @@
         </div>
     </div>
 
-    <!-- Draw Together -->
+    <!-- Draw Together Modal -->
     <div
       class="modal"
       id="draw-together-modal"
@@ -2046,28 +2046,34 @@
       <div
         class="modal-content"
         style="
-          max-width:1000px;
-          width:calc(100% - 24px);
+          width:min(1000px, calc(100% - 20px));
+          max-height:calc(100vh - 20px);
           padding:0;
           background:transparent;
+          overflow:hidden;
         "
       >
+    
         <div
           style="
             background:var(--secondary-bg);
             border-radius:14px;
             overflow:hidden;
+            display:flex;
+            flex-direction:column;
+            max-height:calc(100vh - 20px);
           "
         >
     
-          <!-- Header -->
+          <!-- HEADER -->
           <div
             style="
               display:flex;
               align-items:center;
-              gap:12px;
-              padding:12px 16px;
+              gap:10px;
+              padding:12px 14px;
               border-bottom:1px solid var(--border-color);
+              flex-shrink:0;
             "
           >
             <div style="font-weight:600;">
@@ -2099,170 +2105,34 @@
             </div>
           </div>
     
-          <!-- Body -->
+    
+          <!-- MAIN CONTENT -->
           <div
             style="
               display:flex;
-              gap:12px;
-              padding:12px;
+              flex-direction:column;
+              gap:10px;
+              padding:10px;
+              overflow:auto;
             "
           >
     
-            <!-- Toolbar -->
+            <!-- CANVAS ON TOP -->
             <div
-              id="draw-toolbar"
               style="
-                width:220px;
-                flex-shrink:0;
+                width:100%;
                 display:flex;
-                flex-direction:column;
-                gap:8px;
-              "
-            >
-    
-              <div style="font-weight:600;">
-                Tools
-              </div>
-    
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool active"
-                  data-tool="brush"
-                >
-                  ✏️ Brush
-                </button>
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool"
-                  data-tool="eraser"
-                >
-                  🧹 Eraser
-                </button>
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool"
-                  data-tool="line"
-                >
-                  ╱ Line
-                </button>
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool"
-                  data-tool="rect"
-                >
-                  ▭ Rect
-                </button>
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool"
-                  data-tool="circle"
-                >
-                  ○ Circle
-                </button>
-    
-                <button
-                  type="button"
-                  class="modal-btn draw-tool"
-                  data-tool="polygon"
-                >
-                  ⬡ Polygon
-                </button>
-    
-              </div>
-    
-              <label>
-                Color
-                <input
-                  id="draw-color"
-                  type="color"
-                  value="#111111"
-                  style="width:100%;height:38px;"
-                >
-              </label>
-    
-              <label>
-                Brush size
-                <input
-                  id="draw-size"
-                  type="range"
-                  min="1"
-                  max="40"
-                  value="4"
-                  style="width:100%;"
-                >
-              </label>
-    
-              <label>
-                Polygon sides
-                <input
-                  id="draw-sides"
-                  type="number"
-                  min="3"
-                  max="12"
-                  value="5"
-                  style="width:70px;"
-                >
-              </label>
-    
-              <div style="display:flex;gap:6px;">
-                <button
-                  type="button"
-                  id="draw-undo"
-                  class="modal-btn"
-                  style="flex:1;"
-                >
-                  Undo
-                </button>
-    
-                <button
-                  type="button"
-                  id="draw-clear"
-                  class="modal-btn"
-                  style="flex:1;"
-                >
-                  Clear
-                </button>
-              </div>
-    
-              <button
-                type="button"
-                id="draw-new"
-                class="modal-btn"
-              >
-                New Drawing
-              </button>
-    
-              <div
-                id="draw-status"
-                style="
-                  font-size:12px;
-                  color:var(--text-secondary);
-                  margin-top:auto;
-                "
-              >
-                Ready to draw
-              </div>
-    
-            </div>
-    
-            <!-- Canvas -->
-            <div
-              style="
-                flex:1;
-                min-width:0;
+                justify-content:center;
               "
             >
               <div
                 style="
+                  width:100%;
                   background:#fff;
                   border-radius:10px;
-                  padding:8px;
+                  padding:6px;
+                  box-sizing:border-box;
+                  box-shadow:0 4px 16px rgba(0,0,0,.08);
                 "
               >
                 <canvas
@@ -2273,6 +2143,7 @@
                     display:block;
                     width:100%;
                     height:auto;
+                    aspect-ratio:8 / 5;
                     background:#fff;
                     border-radius:6px;
                     touch-action:none;
@@ -2281,11 +2152,346 @@
               </div>
             </div>
     
+    
+            <!-- TOOLBOX -->
+            <div
+              id="draw-toolbar"
+              style="
+                width:100%;
+                box-sizing:border-box;
+                background:var(--primary-bg);
+                border-radius:10px;
+                padding:10px;
+                display:flex;
+                flex-direction:column;
+                gap:10px;
+              "
+            >
+    
+              <!-- TOOLS -->
+              <div>
+                <div
+                  style="
+                    font-size:12px;
+                    font-weight:600;
+                    color:var(--text-secondary);
+                    margin-bottom:6px;
+                  "
+                >
+                  Tools
+                </div>
+    
+                <div
+                  style="
+                    display:grid;
+                    grid-template-columns:repeat(6, minmax(0, 1fr));
+                    gap:6px;
+                  "
+                >
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool active"
+                    data-tool="brush"
+                    title="Brush"
+                  >
+                    ✏️
+                    <span>Brush</span>
+                  </button>
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool"
+                    data-tool="eraser"
+                    title="Eraser"
+                  >
+                    🧹
+                    <span>Eraser</span>
+                  </button>
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool"
+                    data-tool="line"
+                    title="Line"
+                  >
+                    ╱
+                    <span>Line</span>
+                  </button>
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool"
+                    data-tool="rect"
+                    title="Rectangle"
+                  >
+                    ▭
+                    <span>Rect</span>
+                  </button>
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool"
+                    data-tool="circle"
+                    title="Circle"
+                  >
+                    ○
+                    <span>Circle</span>
+                  </button>
+    
+                  <button
+                    type="button"
+                    class="modal-btn draw-tool"
+                    data-tool="polygon"
+                    title="Polygon"
+                  >
+                    ⬡
+                    <span>Polygon</span>
+                  </button>
+    
+                </div>
+              </div>
+    
+    
+              <!-- COLOR + SIZE -->
+              <div
+                style="
+                  display:flex;
+                  gap:12px;
+                  align-items:center;
+                  flex-wrap:wrap;
+                "
+              >
+    
+                <!-- Color -->
+                <div
+                  style="
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
+                  "
+                >
+                  <span
+                    style="
+                      font-size:12px;
+                      color:var(--text-secondary);
+                    "
+                  >
+                    Color
+                  </span>
+    
+                  <input
+                    id="draw-color"
+                    type="color"
+                    value="#111111"
+                    style="
+                      width:42px;
+                      height:36px;
+                      padding:2px;
+                      border:1px solid var(--border-color);
+                      border-radius:8px;
+                      cursor:pointer;
+                    "
+                  >
+                </div>
+    
+    
+                <!-- Brush size -->
+                <div
+                  style="
+                    flex:1;
+                    min-width:150px;
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
+                  "
+                >
+                  <span
+                    style="
+                      font-size:12px;
+                      color:var(--text-secondary);
+                      white-space:nowrap;
+                    "
+                  >
+                    Size
+                  </span>
+    
+                  <input
+                    id="draw-size"
+                    type="range"
+                    min="1"
+                    max="40"
+                    value="4"
+                    style="
+                      flex:1;
+                      min-width:0;
+                      cursor:pointer;
+                    "
+                  >
+    
+                  <span
+                    id="draw-size-value"
+                    style="
+                      min-width:30px;
+                      text-align:right;
+                      font-size:12px;
+                    "
+                  >
+                    4
+                  </span>
+                </div>
+    
+    
+                <!-- Polygon sides -->
+                <div
+                  style="
+                    display:flex;
+                    align-items:center;
+                    gap:6px;
+                  "
+                >
+                  <span
+                    style="
+                      font-size:12px;
+                      color:var(--text-secondary);
+                      white-space:nowrap;
+                    "
+                  >
+                    Sides
+                  </span>
+    
+                  <input
+                    id="draw-sides"
+                    type="number"
+                    min="3"
+                    max="12"
+                    value="5"
+                    style="
+                      width:55px;
+                      height:34px;
+                      box-sizing:border-box;
+                      border:1px solid var(--border-color);
+                      border-radius:7px;
+                      padding:4px 6px;
+                    "
+                  >
+                </div>
+    
+              </div>
+    
+    
+              <!-- ACTION BUTTONS -->
+              <div
+                style="
+                  display:flex;
+                  gap:7px;
+                  flex-wrap:wrap;
+                "
+              >
+    
+                <button
+                  type="button"
+                  id="draw-undo"
+                  class="modal-btn"
+                >
+                  ↶ Undo
+                </button>
+    
+                <button
+                  type="button"
+                  id="draw-clear"
+                  class="modal-btn"
+                >
+                  🗑 Clear
+                </button>
+    
+                <button
+                  type="button"
+                  id="draw-new"
+                  class="modal-btn"
+                >
+                  ✨ New Drawing
+                </button>
+    
+              </div>
+    
+            </div>
+    
           </div>
     
         </div>
       </div>
     </div>
+    
+    
+    <!-- Mobile layout -->
+    <style>
+      #draw-together-modal #draw-toolbar .draw-tool {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 5px;
+      }
+    
+      #draw-together-modal #draw-toolbar .draw-tool span {
+        font-size: 12px;
+      }
+    
+      @media (max-width: 600px) {
+    
+        #draw-together-modal .modal-content {
+          width: calc(100% - 10px) !important;
+          max-height: calc(100vh - 10px) !important;
+        }
+    
+        #draw-together-modal .modal-content > div {
+          max-height: calc(100vh - 10px);
+          border-radius: 10px !important;
+        }
+    
+        #draw-together-modal #draw-toolbar {
+          padding: 8px;
+        }
+    
+        #draw-together-modal #draw-toolbar .draw-tool {
+          min-height: 44px;
+          flex-direction:column;
+          gap:2px;
+        }
+    
+        #draw-together-modal #draw-toolbar .draw-tool span {
+          font-size:10px;
+        }
+    
+        #draw-together-modal #draw-send {
+          padding:7px 9px;
+          font-size:12px;
+        }
+    
+        #draw-together-modal #draw-close {
+          padding:7px 9px;
+          font-size:12px;
+        }
+      }
+    
+      @media (max-width: 400px) {
+    
+        #draw-together-modal #draw-toolbar .draw-tool {
+          min-height:40px;
+        }
+    
+        #draw-together-modal #draw-toolbar .draw-tool span {
+          display:none;
+        }
+    
+        #draw-together-modal #draw-toolbar .draw-tool {
+          font-size:18px;
+        }
+    
+      }
+    </style>
     
     <div class="modal" id="theme-editor-modal">
         <div class="modal-content">
