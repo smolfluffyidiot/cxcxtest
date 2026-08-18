@@ -1,615 +1,2122 @@
-/* name=js/draw-together.js
-   Improved Draw Together integration with SESSION_ID-safe storage and migration.
-
-   What this version fixes:
-   - NEVER calls core.getStorageKey() while SESSION_ID is uninitialized.
-   - When SESSION_ID becomes available later, attempts to migrate any drawings
-     saved under the fallback key into the session-scoped key returned by getStorageKey().
-   - Uses localforage when available; falls back to localStorage.
-   - Defensive, self-contained UI panel (launcher + panel) and drawing engine.
-   - Sends drawing messages via addMessage() if available, otherwise falls back to window.messages + renderMessages().
-   - Random partner doodles remain, mobile-friendly, and drawings survive reloads.
-
-   Install: replace js/draw-together.js with this file and include it after other scripts.
-*/
+/* js/draw-together.js
+ *
+ * Draw Together
+ * - Uses the existing #open-draw-together button
+ * - Uses the existing #draw-together-modal
+ * - Canvas on top, toolbox underneath
+ * - Mobile friendly
+ * - No floating launcher/button
+ * - Uses addMessage() when available
+ * - Saves the current drawing locally
+ * - Exposes window.drawTogether.open()
+ * - Exposes window.drawTogether.send()
+ * - Exposes window.drawTogether.partnerDraw()
+ *
+ * IMPORTANT:
+ * Replace the old draw-together.js completely with this file.
+ */
 
 (function () {
   'use strict';
 
-  // Config
+  /* =========================================================
+     CONFIG
+  ========================================================= */
+
   const CANVAS_W = 800;
   const CANVAS_H = 500;
-  const SAFE_SUFFIX = 'canvas_last_drawing_v1';
-  const PARTNER_REPLY_PROB = 1;
-  const PARTNER_MIN_OBJ = 3;
-  const PARTNER_MAX_OBJ = 12;
-  const SAVE_DEBOUNCE_MS = 300;
-  const SESSION_POLL_INTERVAL = 500; // ms
-  const SESSION_POLL_TIMEOUT = 30000; // ms
 
-  // Simple logging helpers
-  const log = (...a) => { try { console.info('[DrawTogether]', ...a); } catch (e) {} };
-  const warn = (...a) => { try { console.warn('[DrawTogether]', ...a); } catch (e) {} };
-  const err = (...a) => { try { console.error('[DrawTogether]', ...a); } catch (e) {} };
+  const STORAGE_SUFFIX = 'draw_together_current_v2';
+  const SAVE_DELAY = 300;
 
-  // Storage helpers (localforage preferred)
-  function saveItemRaw(key, value) {
-    try {
-      if (window.localforage) return localforage.setItem(key, value).catch(e => { warn('localforage.setItem failed', e); });
-      localStorage.setItem(key, JSON.stringify(value));
-      return Promise.resolve();
-    } catch (e) {
-      try { localStorage.setItem(key, JSON.stringify(value)); } catch (ee) { warn('localStorage.setItem fallback failed', ee); }
-      return Promise.resolve();
-    }
-  }
-  function loadItemRaw(key) {
-    try {
-      if (window.localforage) return localforage.getItem(key).catch(e => { warn('localforage.getItem failed', e); return null; });
-      const raw = localStorage.getItem(key);
-      return Promise.resolve(raw ? JSON.parse(raw) : null);
-    } catch (e) {
-      try { const raw2 = localStorage.getItem(key); return Promise.resolve(raw2 ? JSON.parse(raw2) : null); } catch (ee) { warn('loadItemRaw fallback failed', ee); return Promise.resolve(null); }
-    }
-  }
-  function removeItemRaw(key) {
-    try {
-      if (window.localforage) return localforage.removeItem(key).catch(e => { warn('localforage.removeItem failed', e); });
-      localStorage.removeItem(key);
-      return Promise.resolve();
-    } catch (e) { try { localStorage.removeItem(key); } catch (ee) {} return Promise.resolve(); }
-  }
+  // This is NOT automatically used by this file.
+  // Your normal message/partner system can use this later.
+  const PARTNER_DRAW_CHANCE = 1; // 8%
 
-  // Storage key helpers (deferred)
+  /* =========================================================
+     LOGGING
+  ========================================================= */
+
+  const log = (...args) => {
+    try {
+      console.info('[DrawTogether]', ...args);
+    } catch (_) {}
+  };
+
+  const warn = (...args) => {
+    try {
+      console.warn('[DrawTogether]', ...args);
+    } catch (_) {}
+  };
+
+  const error = (...args) => {
+    try {
+      console.error('[DrawTogether]', ...args);
+    } catch (_) {}
+  };
+
+
+  /* =========================================================
+     DOM
+  ========================================================= */
+
+  let canvas = null;
+  let ctx = null;
+
+  let modal = null;
+  let openButton = null;
+  let closeButton = null;
+  let sendButton = null;
+
+  let undoButton = null;
+  let clearButton = null;
+  let newButton = null;
+
+  let colorInput = null;
+  let sizeInput = null;
+  let sizeValue = null;
+  let sidesInput = null;
+
+  let toolButtons = [];
+
+  let initialized = false;
+
+
+  /* =========================================================
+     DRAWING STATE
+  ========================================================= */
+
+  let actions = [];
+  let undone = [];
+
+  let currentTool = 'brush';
+  let currentColor = '#111111';
+  let currentSize = 4;
+  let polygonSides = 5;
+
+  let drawing = false;
+  let startPoint = null;
+  let currentStroke = null;
+  let previewAction = null;
+
+  let saveTimer = null;
+
+
+  /* =========================================================
+     STORAGE
+  ========================================================= */
+
   function fallbackStorageKey() {
     try {
-      if (typeof window.APP_PREFIX === 'string' && window.APP_PREFIX.length > 0) return window.APP_PREFIX + SAFE_SUFFIX;
-    } catch (e) {}
-    return 'app_' + SAFE_SUFFIX;
+      if (
+        typeof window.APP_PREFIX === 'string' &&
+        window.APP_PREFIX.length
+      ) {
+        return window.APP_PREFIX + STORAGE_SUFFIX;
+      }
+    } catch (_) {}
+
+    return 'app_' + STORAGE_SUFFIX;
   }
 
-  // safe attempt to obtain session-scoped key using core.getStorageKey
-  function tryGetSessionKey() {
+  function getStorageKey() {
+    /*
+     * We deliberately avoid calling getStorageKey() unless it
+     * actually exists and SESSION_ID is available.
+     */
+
     try {
-      if (typeof SESSION_ID === 'undefined' || SESSION_ID === null) return null;
-      if (typeof getStorageKey !== 'function') return null;
-      try {
-        return getStorageKey(SAFE_SUFFIX);
-      } catch (e) {
-        // core.getStorageKey may throw until SESSION_ID is fully valid; treat as not ready
-        warn('getStorageKey threw while trying to compute session key:', e && e.message ? e.message : e);
-        return null;
+      if (
+        typeof window.SESSION_ID !== 'undefined' &&
+        window.SESSION_ID !== null &&
+        typeof window.getStorageKey === 'function'
+      ) {
+        const key = window.getStorageKey(STORAGE_SUFFIX);
+
+        if (key) {
+          return key;
+        }
       }
     } catch (e) {
+      warn('Session storage key unavailable:', e);
+    }
+
+    return fallbackStorageKey();
+  }
+
+
+  async function saveDrawing() {
+    const data = {
+      version: 2,
+      actions: actions,
+      timestamp: Date.now()
+    };
+
+    const key = getStorageKey();
+
+    try {
+      if (window.localforage) {
+        await window.localforage.setItem(key, data);
+        return;
+      }
+    } catch (e) {
+      warn('localforage save failed:', e);
+    }
+
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      warn('localStorage save failed:', e);
+    }
+  }
+
+
+  function scheduleSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+    }
+
+    saveTimer = setTimeout(() => {
+      saveDrawing().catch(() => {});
+    }, SAVE_DELAY);
+  }
+
+
+  async function loadDrawing() {
+    const key = getStorageKey();
+    let data = null;
+
+    try {
+      if (window.localforage) {
+        data = await window.localforage.getItem(key);
+      }
+    } catch (e) {
+      warn('localforage load failed:', e);
+    }
+
+    if (!data) {
+      try {
+        const raw = localStorage.getItem(key);
+
+        if (raw) {
+          data = JSON.parse(raw);
+        }
+      } catch (e) {
+        warn('localStorage load failed:', e);
+      }
+    }
+
+    if (
+      data &&
+      Array.isArray(data.actions)
+    ) {
+      actions = data.actions.slice();
+      undone = [];
+    } else {
+      actions = [];
+      undone = [];
+    }
+
+    redraw();
+  }
+
+
+  /* =========================================================
+     CANVAS
+  ========================================================= */
+
+  function setupCanvas() {
+    if (!canvas) return;
+
+    const dpr = Math.max(
+      1,
+      window.devicePixelRatio || 1
+    );
+
+    canvas.width = CANVAS_W * dpr;
+    canvas.height = CANVAS_H * dpr;
+
+    /*
+     * CSS controls the visible size.
+     * The internal drawing coordinates remain 800x500.
+     */
+
+    canvas.style.aspectRatio = '800 / 500';
+
+    ctx = canvas.getContext('2d', {
+      alpha: false
+    });
+
+    ctx.setTransform(
+      dpr,
+      0,
+      0,
+      dpr,
+      0,
+      0
+    );
+
+    redraw();
+  }
+
+
+  function clearCanvasPixels() {
+    if (!ctx) return;
+
+    ctx.save();
+
+    ctx.setTransform(
+      window.devicePixelRatio || 1,
+      0,
+      0,
+      window.devicePixelRatio || 1,
+      0,
+      0
+    );
+
+    ctx.clearRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    ctx.fillStyle = '#ffffff';
+
+    ctx.fillRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    ctx.restore();
+
+    /*
+     * Restore the normal drawing transform.
+     */
+    const dpr = Math.max(
+      1,
+      window.devicePixelRatio || 1
+    );
+
+    ctx.setTransform(
+      dpr,
+      0,
+      0,
+      dpr,
+      0,
+      0
+    );
+  }
+
+
+  function redraw() {
+    if (!ctx) return;
+
+    clearCanvasPixels();
+
+    for (const action of actions) {
+      renderAction(ctx, action);
+    }
+
+    if (previewAction) {
+      renderAction(
+        ctx,
+        previewAction,
+        true
+      );
+    }
+  }
+
+
+  /* =========================================================
+     DRAWING RENDERER
+  ========================================================= */
+
+  function renderAction(context, action, preview = false) {
+    if (!action || !context) return;
+
+    try {
+      context.save();
+
+      /*
+       * Stroke / brush / eraser
+       */
+      if (action.type === 'stroke') {
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        context.lineWidth = action.width || 2;
+
+        if (action.mode === 'eraser') {
+          context.globalCompositeOperation =
+            'destination-out';
+        } else {
+          context.globalCompositeOperation =
+            'source-over';
+
+          context.strokeStyle =
+            action.color || '#111111';
+        }
+
+        const points = action.points || [];
+
+        if (!points.length) {
+          context.restore();
+          return;
+        }
+
+        context.beginPath();
+
+        if (preview) {
+          context.setLineDash([6, 6]);
+        }
+
+        context.moveTo(
+          points[0].x,
+          points[0].y
+        );
+
+        for (let i = 1; i < points.length; i++) {
+          context.lineTo(
+            points[i].x,
+            points[i].y
+          );
+        }
+
+        context.stroke();
+
+        context.restore();
+        return;
+      }
+
+
+      /*
+       * Line
+       */
+      if (action.type === 'line') {
+        context.lineWidth =
+          action.width || 2;
+
+        context.strokeStyle =
+          action.color || '#111111';
+
+        context.lineCap = 'round';
+
+        if (preview) {
+          context.setLineDash([6, 6]);
+        }
+
+        context.beginPath();
+
+        context.moveTo(
+          action.x1,
+          action.y1
+        );
+
+        context.lineTo(
+          action.x2,
+          action.y2
+        );
+
+        context.stroke();
+
+        context.restore();
+        return;
+      }
+
+
+      /*
+       * Rectangle
+       */
+      if (action.type === 'rect') {
+        context.lineWidth =
+          action.width || 2;
+
+        context.strokeStyle =
+          action.color || '#111111';
+
+        if (action.fill) {
+          context.fillStyle = action.fill;
+          context.fillRect(
+            action.x,
+            action.y,
+            action.w,
+            action.h
+          );
+        }
+
+        if (preview) {
+          context.setLineDash([6, 6]);
+        }
+
+        context.strokeRect(
+          action.x,
+          action.y,
+          action.w,
+          action.h
+        );
+
+        context.restore();
+        return;
+      }
+
+
+      /*
+       * Circle
+       */
+      if (action.type === 'circle') {
+        context.lineWidth =
+          action.width || 2;
+
+        context.strokeStyle =
+          action.color || '#111111';
+
+        context.beginPath();
+
+        context.arc(
+          action.cx,
+          action.cy,
+          action.r,
+          0,
+          Math.PI * 2
+        );
+
+        if (action.fill) {
+          context.fillStyle = action.fill;
+          context.fill();
+        }
+
+        if (preview) {
+          context.setLineDash([6, 6]);
+        }
+
+        context.stroke();
+
+        context.restore();
+        return;
+      }
+
+
+      /*
+       * Polygon
+       */
+      if (action.type === 'polygon') {
+        const sides = Math.max(
+          3,
+          Math.floor(action.sides || 5)
+        );
+
+        const rotation =
+          action.rotation || 0;
+
+        context.lineWidth =
+          action.width || 2;
+
+        context.strokeStyle =
+          action.color || '#111111';
+
+        context.beginPath();
+
+        for (let i = 0; i < sides; i++) {
+          const angle =
+            rotation +
+            (i / sides) * Math.PI * 2;
+
+          const x =
+            action.cx +
+            Math.cos(angle) * action.r;
+
+          const y =
+            action.cy +
+            Math.sin(angle) * action.r;
+
+          if (i === 0) {
+            context.moveTo(x, y);
+          } else {
+            context.lineTo(x, y);
+          }
+        }
+
+        context.closePath();
+
+        if (action.fill) {
+          context.fillStyle = action.fill;
+          context.fill();
+        }
+
+        if (preview) {
+          context.setLineDash([6, 6]);
+        }
+
+        context.stroke();
+
+        context.restore();
+        return;
+      }
+
+      context.restore();
+
+    } catch (e) {
+      warn('renderAction failed:', e);
+    }
+  }
+
+
+  /* =========================================================
+     COORDINATES
+  ========================================================= */
+
+  function pointerPosition(event) {
+    if (!canvas) {
+      return {
+        x: 0,
+        y: 0
+      };
+    }
+
+    const rect =
+      canvas.getBoundingClientRect();
+
+    let clientX;
+    let clientY;
+
+    if (
+      event.touches &&
+      event.touches.length
+    ) {
+      clientX =
+        event.touches[0].clientX;
+
+      clientY =
+        event.touches[0].clientY;
+    } else if (
+      event.changedTouches &&
+      event.changedTouches.length
+    ) {
+      clientX =
+        event.changedTouches[0].clientX;
+
+      clientY =
+        event.changedTouches[0].clientY;
+    } else {
+      clientX = event.clientX;
+      clientY = event.clientY;
+    }
+
+    return {
+      x: Math.max(
+        0,
+        Math.min(
+          CANVAS_W,
+          (clientX - rect.left) *
+            (CANVAS_W / rect.width)
+        )
+      ),
+
+      y: Math.max(
+        0,
+        Math.min(
+          CANVAS_H,
+          (clientY - rect.top) *
+            (CANVAS_H / rect.height)
+        )
+      )
+    };
+  }
+
+
+  /* =========================================================
+     POINTER EVENTS
+  ========================================================= */
+
+  function startDrawing(event) {
+    if (!canvas) return;
+
+    event.preventDefault();
+
+    try {
+      if (
+        event.pointerId !== undefined &&
+        canvas.setPointerCapture
+      ) {
+        canvas.setPointerCapture(
+          event.pointerId
+        );
+      }
+    } catch (_) {}
+
+    const point =
+      pointerPosition(event);
+
+    drawing = true;
+    startPoint = point;
+    previewAction = null;
+
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+      currentStroke = {
+        type: 'stroke',
+
+        mode:
+          currentTool === 'eraser'
+            ? 'eraser'
+            : 'brush',
+
+        color: currentColor,
+        width: currentSize,
+
+        points: [
+          {
+            x: point.x,
+            y: point.y
+          }
+        ]
+      };
+
+      actions.push(currentStroke);
+
+      undone = [];
+
+      redraw();
+      scheduleSave();
+    }
+  }
+
+
+  function moveDrawing(event) {
+    if (!drawing) return;
+
+    event.preventDefault();
+
+    const point =
+      pointerPosition(event);
+
+    /*
+     * Brush
+     */
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+      if (!currentStroke) return;
+
+      currentStroke.points.push({
+        x: point.x,
+        y: point.y
+      });
+
+      redraw();
+      return;
+    }
+
+
+    /*
+     * Line
+     */
+    if (currentTool === 'line') {
+      previewAction = {
+        type: 'line',
+
+        x1: startPoint.x,
+        y1: startPoint.y,
+
+        x2: point.x,
+        y2: point.y,
+
+        color: currentColor,
+        width: currentSize
+      };
+
+      redraw();
+      return;
+    }
+
+
+    /*
+     * Rectangle
+     */
+    if (currentTool === 'rect') {
+      const x =
+        Math.min(
+          startPoint.x,
+          point.x
+        );
+
+      const y =
+        Math.min(
+          startPoint.y,
+          point.y
+        );
+
+      const w =
+        Math.abs(
+          point.x -
+          startPoint.x
+        );
+
+      const h =
+        Math.abs(
+          point.y -
+          startPoint.y
+        );
+
+      previewAction = {
+        type: 'rect',
+
+        x,
+        y,
+        w,
+        h,
+
+        color: currentColor,
+        width: currentSize
+      };
+
+      redraw();
+      return;
+    }
+
+
+    /*
+     * Circle
+     */
+    if (currentTool === 'circle') {
+      const dx =
+        point.x -
+        startPoint.x;
+
+      const dy =
+        point.y -
+        startPoint.y;
+
+      const radius =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      previewAction = {
+        type: 'circle',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: radius,
+
+        color: currentColor,
+        width: currentSize
+      };
+
+      redraw();
+      return;
+    }
+
+
+    /*
+     * Polygon
+     */
+    if (currentTool === 'polygon') {
+      const dx =
+        point.x -
+        startPoint.x;
+
+      const dy =
+        point.y -
+        startPoint.y;
+
+      const radius =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      const rotation =
+        Math.atan2(dy, dx);
+
+      previewAction = {
+        type: 'polygon',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: radius,
+
+        sides: polygonSides,
+
+        rotation,
+
+        color: currentColor,
+        width: currentSize
+      };
+
+      redraw();
+    }
+  }
+
+
+  function finishDrawing(event) {
+    if (!drawing) return;
+
+    event.preventDefault();
+
+    const point =
+      pointerPosition(event);
+
+    drawing = false;
+
+    /*
+     * Brush / eraser
+     */
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+      currentStroke = null;
+
+      scheduleSave();
+      redraw();
+    }
+
+
+    /*
+     * Line
+     */
+    else if (currentTool === 'line') {
+      actions.push({
+        type: 'line',
+
+        x1: startPoint.x,
+        y1: startPoint.y,
+
+        x2: point.x,
+        y2: point.y,
+
+        color: currentColor,
+        width: currentSize
+      });
+
+      undone = [];
+
+      scheduleSave();
+    }
+
+
+    /*
+     * Rectangle
+     */
+    else if (currentTool === 'rect') {
+      actions.push({
+        type: 'rect',
+
+        x: Math.min(
+          startPoint.x,
+          point.x
+        ),
+
+        y: Math.min(
+          startPoint.y,
+          point.y
+        ),
+
+        w: Math.abs(
+          point.x -
+          startPoint.x
+        ),
+
+        h: Math.abs(
+          point.y -
+          startPoint.y
+        ),
+
+        color: currentColor,
+        width: currentSize
+      });
+
+      undone = [];
+
+      scheduleSave();
+    }
+
+
+    /*
+     * Circle
+     */
+    else if (currentTool === 'circle') {
+      const dx =
+        point.x -
+        startPoint.x;
+
+      const dy =
+        point.y -
+        startPoint.y;
+
+      const radius =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      actions.push({
+        type: 'circle',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: radius,
+
+        color: currentColor,
+        width: currentSize
+      });
+
+      undone = [];
+
+      scheduleSave();
+    }
+
+
+    /*
+     * Polygon
+     */
+    else if (currentTool === 'polygon') {
+      const dx =
+        point.x -
+        startPoint.x;
+
+      const dy =
+        point.y -
+        startPoint.y;
+
+      const radius =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      const rotation =
+        Math.atan2(dy, dx);
+
+      actions.push({
+        type: 'polygon',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: radius,
+
+        sides: polygonSides,
+
+        rotation,
+
+        color: currentColor,
+        width: currentSize
+      });
+
+      undone = [];
+
+      scheduleSave();
+    }
+
+    previewAction = null;
+    startPoint = null;
+
+    redraw();
+  }
+
+
+  /* =========================================================
+     UNDO / CLEAR / NEW
+  ========================================================= */
+
+  function undo() {
+    if (!actions.length) return;
+
+    const action =
+      actions.pop();
+
+    undone.push(action);
+
+    scheduleSave();
+    redraw();
+  }
+
+
+  function clearDrawing() {
+    actions = [];
+    undone = [];
+
+    previewAction = null;
+    currentStroke = null;
+
+    scheduleSave();
+    redraw();
+  }
+
+
+  function newDrawing() {
+    clearDrawing();
+  }
+
+
+  /* =========================================================
+     TOOLS
+  ========================================================= */
+
+  function selectTool(tool) {
+    const allowed = [
+      'brush',
+      'eraser',
+      'line',
+      'rect',
+      'circle',
+      'polygon'
+    ];
+
+    if (!allowed.includes(tool)) {
+      tool = 'brush';
+    }
+
+    currentTool = tool;
+
+    toolButtons.forEach(button => {
+      button.classList.toggle(
+        'active',
+        button.dataset.tool === tool
+      );
+    });
+  }
+
+
+  /* =========================================================
+     EXPORT DRAWING
+  ========================================================= */
+
+  function createImageData() {
+    const output =
+      document.createElement('canvas');
+
+    output.width = CANVAS_W;
+    output.height = CANVAS_H;
+
+    const outputContext =
+      output.getContext('2d');
+
+    /*
+     * White background.
+     */
+    outputContext.fillStyle =
+      '#ffffff';
+
+    outputContext.fillRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    for (const action of actions) {
+      renderAction(
+        outputContext,
+        action
+      );
+    }
+
+    return output.toDataURL(
+      'image/png'
+    );
+  }
+
+
+  /* =========================================================
+     SEND TO EXISTING CHAT
+  ========================================================= */
+
+  function sendToPartner() {
+    try {
+      const image =
+        createImageData();
+
+      const drawingData =
+        JSON.parse(
+          JSON.stringify(actions)
+        );
+
+      const message = {
+        id:
+          Date.now() +
+          Math.floor(
+            Math.random() * 1000
+          ),
+
+        sender: 'user',
+
+        text: '',
+
+        timestamp: new Date(),
+
+        image: image,
+
+        drawingData: drawingData,
+
+        type: 'drawing',
+
+        status: 'sent'
+      };
+
+
+      /*
+       * Use the app's existing message system.
+       */
+      if (
+        typeof window.addMessage ===
+        'function'
+      ) {
+        window.addMessage(message);
+      }
+
+      /*
+       * Fallback if addMessage doesn't exist.
+       */
+      else {
+        window.messages =
+          window.messages || [];
+
+        window.messages.push(message);
+
+        if (
+          typeof window.renderMessages ===
+          'function'
+        ) {
+          window.renderMessages();
+        } else {
+          warn(
+            'addMessage() and renderMessages() are unavailable.'
+          );
+        }
+      }
+
+
+      /*
+       * Save drawing.
+       */
+      scheduleSave();
+
+      /*
+       * Close modal after sending.
+       */
+      close();
+
+      log('Drawing sent to partner.');
+
+    } catch (e) {
+      error(
+        'Failed to send drawing:',
+        e
+      );
+    }
+  }
+
+
+  /* =========================================================
+     PARTNER DRAWING
+  =========================================================
+     
+     This function does NOT automatically run when you send
+     a drawing.
+
+     Your existing partner-response code can eventually call:
+
+         window.drawTogether.partnerDraw();
+
+     when the partner randomly decides to draw.
+  ========================================================= */
+
+  function partnerDraw(customActions) {
+    try {
+      const partnerActions =
+        Array.isArray(customActions)
+          ? customActions
+          : createRandomPartnerDrawing();
+
+      const output =
+        document.createElement('canvas');
+
+      output.width = CANVAS_W;
+      output.height = CANVAS_H;
+
+      const outputContext =
+        output.getContext('2d');
+
+      outputContext.fillStyle =
+        '#ffffff';
+
+      outputContext.fillRect(
+        0,
+        0,
+        CANVAS_W,
+        CANVAS_H
+      );
+
+      for (
+        const action of partnerActions
+      ) {
+        renderAction(
+          outputContext,
+          action
+        );
+      }
+
+      const image =
+        output.toDataURL(
+          'image/png'
+        );
+
+      const message = {
+        id:
+          Date.now() +
+          Math.floor(
+            Math.random() * 1000
+          ),
+
+        sender: 'partner',
+
+        text: '',
+
+        timestamp: new Date(),
+
+        image: image,
+
+        drawingData:
+          partnerActions,
+
+        type: 'drawing',
+
+        status: 'sent'
+      };
+
+
+      if (
+        typeof window.addMessage ===
+        'function'
+      ) {
+        window.addMessage(message);
+      } else {
+        window.messages =
+          window.messages || [];
+
+        window.messages.push(message);
+
+        if (
+          typeof window.renderMessages ===
+          'function'
+        ) {
+          window.renderMessages();
+        }
+      }
+
+      log('Partner drawing sent.');
+
+      return message;
+
+    } catch (e) {
+      error(
+        'Partner drawing failed:',
+        e
+      );
+
       return null;
     }
   }
 
-  // Compute the effective key to use at call time (session-scoped if available, else fallback)
-  function effectiveKey() {
-    const k = tryGetSessionKey();
-    if (k) return k;
-    return fallbackStorageKey();
+
+  /* =========================================================
+     RANDOM PARTNER DOODLE
+  ========================================================= */
+
+  function randomColor() {
+    const hue =
+      Math.floor(
+        Math.random() * 360
+      );
+
+    return `hsl(${hue} 65% 45%)`;
   }
 
-  // Attempt migration from fallbackKey -> sessionKey when session becomes available
-  async function migrateFallbackToSession() {
-    const sessionKey = tryGetSessionKey();
-    if (!sessionKey) return;
-    const fallbackKeyValue = fallbackStorageKey();
-    try {
-      // check localforage first if available
-      if (window.localforage) {
-        const fallbackData = await localforage.getItem(fallbackKeyValue).catch(() => null);
-        if (fallbackData) {
-          // copy to session key
-          await localforage.setItem(sessionKey, fallbackData).catch(e => { warn('migrate: setItem failed', e); });
-          // remove fallback
-          try { await localforage.removeItem(fallbackKeyValue).catch(()=>{}); } catch (_) {}
-          // also try to remove from localStorage to keep things tidy
-          try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
-          log('Migrated DrawTogether data from fallback to session storage.');
-          return;
+
+  function randomNumber(min, max) {
+    return (
+      min +
+      Math.random() *
+      (max - min)
+    );
+  }
+
+
+  function randomInt(min, max) {
+    return Math.floor(
+      randomNumber(
+        min,
+        max + 1
+      )
+    );
+  }
+
+
+  function randomPartnerDoodle() {
+    const count =
+      randomInt(3, 10);
+
+    const result = [];
+
+    for (let i = 0; i < count; i++) {
+      const type =
+        [
+          'stroke',
+          'line',
+          'circle',
+          'rect',
+          'polygon'
+        ][
+          randomInt(0, 4)
+        ];
+
+      const color =
+        randomColor();
+
+      const width =
+        randomInt(2, 7);
+
+
+      if (type === 'stroke') {
+        const points = [];
+
+        let x =
+          randomNumber(
+            40,
+            CANVAS_W - 40
+          );
+
+        let y =
+          randomNumber(
+            40,
+            CANVAS_H - 40
+          );
+
+        const pointCount =
+          randomInt(4, 14);
+
+        for (
+          let j = 0;
+          j < pointCount;
+          j++
+        ) {
+          x += randomNumber(
+            -35,
+            35
+          );
+
+          y += randomNumber(
+            -35,
+            35
+          );
+
+          x = Math.max(
+            10,
+            Math.min(
+              CANVAS_W - 10,
+              x
+            )
+          );
+
+          y = Math.max(
+            10,
+            Math.min(
+              CANVAS_H - 10,
+              y
+            )
+          );
+
+          points.push({
+            x,
+            y
+          });
         }
+
+        result.push({
+          type: 'stroke',
+
+          mode: 'brush',
+
+          color,
+
+          width,
+
+          points
+        });
       }
-      // fallback to localStorage
-      const raw = localStorage.getItem(fallbackKeyValue);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          // store into localforage if available else localStorage sessionKey
-          if (window.localforage) {
-            await localforage.setItem(sessionKey, parsed).catch(()=>{});
-            // remove fallback localStorage
-            try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
-            // also remove fallback localforage if any (redundant)
-            try { await localforage.removeItem(fallbackKeyValue).catch(()=>{}); } catch (_) {}
-            log('Migrated DrawTogether data from localStorage fallback to localforage session key.');
-          } else {
-            localStorage.setItem(sessionKey, raw);
-            try { localStorage.removeItem(fallbackKeyValue); } catch (_) {}
-            log('Migrated DrawTogether data from localStorage fallback to localStorage session key.');
-          }
-        } catch (e) {
-          warn('migrateFallbackToSession: parse failed', e);
-        }
-      } else {
-        // nothing to migrate
+
+
+      else if (type === 'line') {
+        result.push({
+          type: 'line',
+
+          x1:
+            randomNumber(
+              20,
+              CANVAS_W - 20
+            ),
+
+          y1:
+            randomNumber(
+              20,
+              CANVAS_H - 20
+            ),
+
+          x2:
+            randomNumber(
+              20,
+              CANVAS_W - 20
+            ),
+
+          y2:
+            randomNumber(
+              20,
+              CANVAS_H - 20
+            ),
+
+          color,
+
+          width
+        });
       }
-    } catch (e) {
-      warn('migrateFallbackToSession failed', e);
+
+
+      else if (type === 'circle') {
+        result.push({
+          type: 'circle',
+
+          cx:
+            randomNumber(
+              50,
+              CANVAS_W - 50
+            ),
+
+          cy:
+            randomNumber(
+              50,
+              CANVAS_H - 50
+            ),
+
+          r:
+            randomNumber(
+              10,
+              80
+            ),
+
+          color,
+
+          width
+        });
+      }
+
+
+      else if (type === 'rect') {
+        result.push({
+          type: 'rect',
+
+          x:
+            randomNumber(
+              20,
+              CANVAS_W - 160
+            ),
+
+          y:
+            randomNumber(
+              20,
+              CANVAS_H - 140
+            ),
+
+          w:
+            randomNumber(
+              30,
+              140
+            ),
+
+          h:
+            randomNumber(
+              30,
+              120
+            ),
+
+          color,
+
+          width
+        });
+      }
+
+
+      else if (type === 'polygon') {
+        result.push({
+          type: 'polygon',
+
+          cx:
+            randomNumber(
+              50,
+              CANVAS_W - 50
+            ),
+
+          cy:
+            randomNumber(
+              50,
+              CANVAS_H - 50
+            ),
+
+          r:
+            randomNumber(
+              15,
+              80
+            ),
+
+          sides:
+            randomInt(
+              3,
+              7
+            ),
+
+          rotation:
+            randomNumber(
+              0,
+              Math.PI * 2
+            ),
+
+          color,
+
+          width
+        });
+      }
     }
+
+    return result;
   }
 
-  // Wait for SESSION_ID/getStorageKey to become available (poll), then call migration once
-  function whenSessionReadyThenMigrate() {
-    return new Promise(resolve => {
-      const sessionKey = tryGetSessionKey();
-      if (sessionKey) {
-        migrateFallbackToSession().then(()=>resolve());
-        return;
-      }
-      let elapsed = 0;
-      const t = setInterval(() => {
-        const k = tryGetSessionKey();
-        elapsed += SESSION_POLL_INTERVAL;
-        if (k || elapsed >= SESSION_POLL_TIMEOUT) {
-          clearInterval(t);
-          if (k) {
-            migrateFallbackToSession().then(()=>resolve());
-          } else resolve(); // give up after timeout
-        }
-      }, SESSION_POLL_INTERVAL);
+
+  function createRandomPartnerDrawing() {
+    return randomPartnerDoodle();
+  }
+
+
+  /* =========================================================
+     MODAL
+  ========================================================= */
+
+  function open() {
+    if (!modal) return;
+
+    modal.style.display = 'flex';
+
+    /*
+     * Some existing modal systems use .modal.
+     * Flex makes the modal center correctly if there isn't
+     * already CSS doing it.
+     */
+
+    requestAnimationFrame(() => {
+      setupCanvas();
     });
+
+    loadDrawing().catch(() => {});
+
+    log('Draw Together opened.');
   }
 
-  // Small helpers used by drawing logic
-  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-  function randRange(a,b){ return a + Math.random()*(b-a); }
-  function randInt(a,b){ return Math.floor(randRange(a,b+1)); }
-  function randomHsl(){ const h=randInt(0,360), s=50+randInt(0,30), l=30+randInt(0,30); return `hsl(${h} ${s}% ${l}%)`; }
-  function randomTranslucent(){ const h=randInt(0,360), s=50+randInt(0,30), l=30+randInt(0,30), a=(0.12+Math.random()*0.6).toFixed(2); return `hsla(${h}, ${s}%, ${l}%, ${a})`; }
 
-  // UI (self-contained panel & launcher)
-  const STYLE_ID = 'dt-styles';
-  function ensureStyles() {
-    if (document.getElementById(STYLE_ID)) return;
-    const css = `
-#dt-launcher { position: fixed; right: 18px; bottom: 18px; width:54px;height:54px;border-radius:50%;background:var(--accent-color,#ff7a6b);border:none;color:#fff;z-index:13000; display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(0,0,0,0.18); cursor:pointer; }
-#dt-panel { position: fixed; right: 14px; bottom: 86px; width: 92%; max-width: 920px; z-index: 12500; display:none; }
-#dt-panel .dt-container { background:var(--secondary-bg,#fff); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.24); padding:12px; display:flex; gap:12px; align-items:flex-start; }
-#dt-toolbar { width:260px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; }
-#dt-canvas-wrap { flex:1; display:flex; flex-direction:column; gap:8px; }
-#dt-canvas { width:100%; height:auto; background:#fff; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.06); touch-action:none; display:block; }
-.dt-btn { padding:8px 10px; border-radius:10px; border:none; background:var(--primary-bg,#f3f3f3); cursor:pointer; color:var(--text-primary,#111); }
-.dt-btn.primary { background:var(--accent-color,#ff7a6b); color:#fff; }
-.dt-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.dt-tools button { width:48%; }
-@media (max-width:640px){ #dt-panel { left:8px; right:8px; } #dt-toolbar { width:44%; } }
-    `;
-    const s = document.createElement('style');
-    s.id = STYLE_ID; s.textContent = css; document.head.appendChild(s);
+  function close() {
+    if (!modal) return;
+
+    modal.style.display = 'none';
+
+    scheduleSave();
+
+    log('Draw Together closed.');
   }
 
-  function buildUI() {
-    if (document.getElementById('dt-launcher')) return getUI();
-    ensureStyles();
-    const launcher = document.createElement('button');
-    launcher.id = 'dt-launcher';
-    launcher.title = 'Draw Together';
-    launcher.innerHTML = '<i class="fas fa-paint-brush" aria-hidden></i>';
-    document.body.appendChild(launcher);
 
-    const panel = document.createElement('div');
-    panel.id = 'dt-panel';
-    panel.innerHTML = `
-      <div class="dt-container" role="dialog" aria-label="Draw Together" style="display:flex;">
-        <div id="dt-toolbar">
-          <div style="font-weight:700;padding:6px 2px;">Draw Together</div>
-          <div class="dt-row dt-tools">
-            <button class="dt-btn" data-tool="brush">Brush</button>
-            <button class="dt-btn" data-tool="eraser">Eraser</button>
-            <button class="dt-btn" data-tool="line">Line</button>
-            <button class="dt-btn" data-tool="polygon">Polygon</button>
-            <button class="dt-btn" data-tool="circle">Circle</button>
-            <button class="dt-btn" data-tool="rect">Rect</button>
-          </div>
-          <div class="dt-row">
-            <input id="dt-color" type="color" value="#111111" style="width:46px;height:36px;border:none;">
-            <input id="dt-size" type="range" min="1" max="64" value="4" style="flex:1;">
-          </div>
-          <div class="dt-row">
-            <label style="font-size:13px;color:var(--text-secondary,#666)">Polygon sides</label>
-            <input id="dt-poly-sides" type="number" min="3" max="12" value="5" style="width:64px;">
-          </div>
-          <div class="dt-row">
-            <button class="dt-btn" id="dt-undo">Undo</button>
-            <button class="dt-btn" id="dt-clear">Clear</button>
-          </div>
-          <div style="margin-top:auto;" class="dt-row">
-            <button class="dt-btn primary" id="dt-send">Send to Chat</button>
-            <button class="dt-btn" id="dt-close">Close</button>
-          </div>
-        </div>
-        <div id="dt-canvas-wrap">
-          <div style="background:var(--primary-bg,#fff);padding:8px;border-radius:8px;">
-            <canvas id="dt-canvas" width="${CANVAS_W}" height="${CANVAS_H}"></canvas>
-          </div>
-          <div style="display:flex;justify-content:flex-end;gap:8px;">
-            <button class="dt-btn" id="dt-new">New</button>
-            <div style="align-self:center;font-size:12px;color:var(--text-secondary,#666)">Saved locally</div>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(panel);
-    return getUI();
-  }
-  function getUI() {
-    return {
-      launcher: document.getElementById('dt-launcher'),
-      panel: document.getElementById('dt-panel'),
-      canvas: document.getElementById('dt-canvas'),
-      toolButtons: Array.from(document.querySelectorAll('#dt-toolbar [data-tool]')),
-      colorInput: document.getElementById('dt-color'),
-      sizeInput: document.getElementById('dt-size'),
-      polyInput: document.getElementById('dt-poly-sides'),
-      undoBtn: document.getElementById('dt-undo'),
-      clearBtn: document.getElementById('dt-clear'),
-      sendBtn: document.getElementById('dt-send'),
-      closeBtn: document.getElementById('dt-close'),
-      newBtn: document.getElementById('dt-new'),
-      panelContainer: document.querySelector('#dt-panel .dt-container')
-    };
-  }
+  /* =========================================================
+     UI EVENTS
+  ========================================================= */
 
-  // Engine factory with safe storage usage
-  function createEngine(ui) {
-    const canvas = ui.canvas;
-    let ctx = null;
-    let dpr = Math.max(1, window.devicePixelRatio || 1);
-
-    function setResolution() {
-      canvas.width = CANVAS_W * dpr;
-      canvas.height = CANVAS_H * dpr;
-      canvas.style.width = '100%';
-      canvas.style.height = 'auto';
-      ctx = canvas.getContext('2d', { alpha: true });
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  function bindUI() {
+    /*
+     * Open button
+     */
+    if (openButton) {
+      openButton.addEventListener(
+        'click',
+        open
+      );
     }
 
-    // data structures
-    let actions = [];
-    let undone = [];
-    let tempShape = null;
-    let isDrawing = false;
-    let startPos = null;
-    let currentTool = 'brush';
-    let currentColor = ui.colorInput ? ui.colorInput.value : '#111111';
-    let currentSize = ui.sizeInput ? parseInt(ui.sizeInput.value,10)||4 : 4;
-    let polySides = ui.polyInput ? parseInt(ui.polyInput.value,10)||5 : 5;
-    let currentStroke = null;
-    let saveTimer = null;
 
-    // schedule save using effectiveKey() computed at call time
-    function scheduleSave() {
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => {
-        try {
-          const key = effectiveKey();
-          await saveItemRaw(key, { actions, t: Date.now() });
-        } catch (e) { warn('scheduleSave failed', e); }
-      }, SAVE_DEBOUNCE_MS);
+    /*
+     * Close
+     */
+    if (closeButton) {
+      closeButton.addEventListener(
+        'click',
+        close
+      );
     }
 
-    function pushAction(a) { actions.push(a); undone = []; scheduleSave(); redraw(); }
-    function clearAll() { actions = []; undone = []; scheduleSave(); redraw(); }
-    function undo() { if (!actions.length) return; undone.push(actions.pop()); scheduleSave(); redraw(); }
 
-    function clientToCanvas(evt) {
-      const rect = canvas.getBoundingClientRect();
-      const p = evt.touches && evt.touches[0] ? evt.touches[0] : evt;
-      const x = (p.clientX - rect.left) * (CANVAS_W / rect.width);
-      const y = (p.clientY - rect.top) * (CANVAS_H / rect.height);
-      return { x, y };
+    /*
+     * Send
+     */
+    if (sendButton) {
+      sendButton.addEventListener(
+        'click',
+        sendToPartner
+      );
     }
 
-    function renderAction(c, a, opts) {
-      opts = opts || {};
-      const preview = !!opts.preview;
-      try {
-        if (a.type === 'stroke') {
-          c.save();
-          c.lineCap = 'round'; c.lineJoin = 'round';
-          c.lineWidth = a.width || 2;
-          if (a.mode === 'eraser') c.globalCompositeOperation = 'destination-out';
-          else { c.globalCompositeOperation = 'source-over'; c.strokeStyle = a.color || '#000'; }
-          c.beginPath();
-          if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          const pts = a.points || [];
-          for (let i=0;i<pts.length;i++){
-            const p = pts[i];
-            if (i===0) c.moveTo(p.x,p.y); else c.lineTo(p.x,p.y);
+
+    /*
+     * Undo
+     */
+    if (undoButton) {
+      undoButton.addEventListener(
+        'click',
+        undo
+      );
+    }
+
+
+    /*
+     * Clear
+     */
+    if (clearButton) {
+      clearButton.addEventListener(
+        'click',
+        () => {
+          if (
+            window.confirm(
+              'Clear the drawing?'
+            )
+          ) {
+            clearDrawing();
           }
-          c.stroke();
-          c.restore();
-        } else if (a.type === 'line') {
-          c.save(); c.lineWidth = a.width || 2; c.strokeStyle = a.color || '#000';
-          if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          c.beginPath(); c.moveTo(a.x1,a.y1); c.lineTo(a.x2,a.y2); c.stroke(); c.restore();
-        } else if (a.type === 'rect') {
-          c.save(); c.lineWidth = a.width || 2;
-          if (a.fill) { c.fillStyle = a.fill; c.fillRect(a.x,a.y,a.w,a.h); }
-          if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          c.strokeStyle = a.color || '#000'; c.strokeRect(a.x,a.y,a.w,a.h); c.restore();
-        } else if (a.type === 'circle') {
-          c.save(); c.lineWidth = a.width || 2; c.beginPath(); c.arc(a.cx,a.cy,a.r,0,Math.PI*2);
-          if (a.fill) { c.fillStyle = a.fill; c.fill(); }
-          if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          c.strokeStyle = a.color || '#000'; c.stroke(); c.restore();
-        } else if (a.type === 'polygon') {
-          c.save(); c.lineWidth = a.width || 2; c.beginPath();
-          const n = Math.max(3, Math.floor(a.sides || 3));
-          for (let i=0;i<n;i++){
-            const ang = (a.rotation || 0) + (i/n)*Math.PI*2;
-            const x = a.cx + Math.cos(ang)*a.r;
-            const y = a.cy + Math.sin(ang)*a.r;
-            if (i===0) c.moveTo(x,y); else c.lineTo(x,y);
+        }
+      );
+    }
+
+
+    /*
+     * New
+     */
+    if (newButton) {
+      newButton.addEventListener(
+        'click',
+        () => {
+          if (
+            window.confirm(
+              'Start a new drawing?'
+            )
+          ) {
+            newDrawing();
           }
-          c.closePath();
-          if (a.fill) { c.fillStyle = a.fill; c.fill(); }
-          if (preview) c.setLineDash([6,6]); else c.setLineDash([]);
-          c.strokeStyle = a.color || '#000'; c.stroke(); c.restore();
         }
-      } catch (e) { warn('renderAction error', e, a); }
+      );
     }
 
-    function redraw() {
-      try {
-        ctx.clearRect(0,0,CANVAS_W,CANVAS_H);
-        ctx.save(); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); ctx.restore();
-        for (let i=0;i<actions.length;i++) renderAction(ctx, actions[i]);
-        if (tempShape) renderAction(ctx, tempShape, { preview:true });
-      } catch (e) { warn('redraw error', e); }
-    }
 
-    function onDown(e) {
-      try { e.preventDefault && e.preventDefault(); } catch (_) {}
-      const p = clientToCanvas(e);
-      isDrawing = true; startPos = p; tempShape = null;
-      if (currentTool === 'brush' || currentTool === 'eraser') {
-        currentStroke = { type:'stroke', mode: currentTool === 'eraser' ? 'eraser' : 'brush', color: currentColor, width: currentSize, points: [p] };
-        actions.push(currentStroke); scheduleSave(); redraw();
-      }
-    }
-    function onMove(e) {
-      if (!isDrawing) return;
-      const p = clientToCanvas(e);
-      if (currentTool === 'brush' || currentTool === 'eraser') {
-        if (!currentStroke) return; currentStroke.points.push(p); redraw();
-      } else if (currentTool === 'line') {
-        tempShape = { type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize }; redraw();
-      } else if (currentTool === 'circle') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        tempShape = { type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }; redraw();
-      } else if (currentTool === 'rect') {
-        const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y);
-        tempShape = { type:'rect', x, y, w, h, color: currentColor, width: currentSize }; redraw();
-      } else if (currentTool === 'polygon') {
-        const dx = p.x - startPos.x, dy = p.y - startPos.y; const r = Math.sqrt(dx*dx + dy*dy);
-        tempShape = { type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }; redraw();
-      }
-    }
-    function onUp(e) {
-      if (!isDrawing) return;
-      isDrawing = false;
-      const p = clientToCanvas(e);
-      if (currentTool === 'brush' || currentTool === 'eraser') { currentStroke = null; scheduleSave(); }
-      else if (currentTool === 'line') pushAction({ type:'line', x1:startPos.x, y1:startPos.y, x2:p.x, y2:p.y, color: currentColor, width: currentSize });
-      else if (currentTool === 'circle') { const dx = p.x - startPos.x, dy = p.y - startPos.y, r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'circle', cx:startPos.x, cy:startPos.y, r, color: currentColor, width: currentSize }); }
-      else if (currentTool === 'rect') { const x = Math.min(startPos.x, p.x), y = Math.min(startPos.y, p.y), w = Math.abs(p.x - startPos.x), h = Math.abs(p.y - startPos.y); pushAction({ type:'rect', x, y, w, h, color: currentColor, width: currentSize }); }
-      else if (currentTool === 'polygon') { const dx = p.x - startPos.x, dy = p.y - startPos.y, r = Math.sqrt(dx*dx + dy*dy); pushAction({ type:'polygon', cx:startPos.x, cy:startPos.y, r, sides: polySides, rotation:0, color: currentColor, width: currentSize }); }
-      tempShape = null; startPos = null; redraw();
-    }
-
-    function attachEvents() {
-      try {
-        if (window.PointerEvent) {
-          canvas.addEventListener('pointerdown', onDown);
-          canvas.addEventListener('pointermove', onMove);
-          window.addEventListener('pointerup', onUp);
-        } else {
-          canvas.addEventListener('mousedown', onDown);
-          canvas.addEventListener('mousemove', onMove);
-          window.addEventListener('mouseup', onUp);
-          canvas.addEventListener('touchstart', onDown, { passive:false });
-          canvas.addEventListener('touchmove', onMove, { passive:false });
-          window.addEventListener('touchend', onUp);
+    /*
+     * Tools
+     */
+    toolButtons.forEach(button => {
+      button.addEventListener(
+        'click',
+        () => {
+          selectTool(
+            button.dataset.tool
+          );
         }
-      } catch (e) { warn('attachEvents failed', e); }
+      );
+    });
+
+
+    /*
+     * Color
+     */
+    if (colorInput) {
+      colorInput.addEventListener(
+        'input',
+        event => {
+          currentColor =
+            event.target.value ||
+            '#111111';
+        }
+      );
     }
 
-    async function loadSaved() {
-      try {
-        // attempt session key first (if available), else fallback
-        const sessionKey = tryGetSessionKey();
-        if (sessionKey) {
-          // try localforage then localStorage
-          if (window.localforage) {
-            const v = await localforage.getItem(sessionKey).catch(()=>null);
-            if (v && Array.isArray(v.actions)) { actions = v.actions.slice(); undone = []; redraw(); return; }
+
+    /*
+     * Brush size
+     */
+    if (sizeInput) {
+      sizeInput.addEventListener(
+        'input',
+        event => {
+          currentSize =
+            parseInt(
+              event.target.value,
+              10
+            ) || 4;
+
+          if (sizeValue) {
+            sizeValue.textContent =
+              String(currentSize);
           }
-          // fallback to localStorage
-          try {
-            const raw = localStorage.getItem(sessionKey);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (parsed && Array.isArray(parsed.actions)) { actions = parsed.actions.slice(); undone = []; redraw(); return; }
-            }
-          } catch (e) {}
         }
-        // session not ready or session key had nothing — try fallback key
-        const fallbackKey = fallbackStorageKey();
-        if (window.localforage) {
-          const v2 = await localforage.getItem(fallbackKey).catch(()=>null);
-          if (v2 && Array.isArray(v2.actions) || (v2 && v2.actions)) { actions = Array.isArray(v2.actions) ? v2.actions.slice() : v2.actions; undone = []; redraw(); return; }
-        }
-        try {
-          const raw2 = localStorage.getItem(fallbackKey);
-          if (raw2) {
-            const parsed2 = JSON.parse(raw2);
-            if (parsed2 && Array.isArray(parsed2.actions)) { actions = parsed2.actions.slice(); undone = []; redraw(); return; }
+      );
+    }
+
+
+    /*
+     * Polygon sides
+     */
+    if (sidesInput) {
+      sidesInput.addEventListener(
+        'input',
+        event => {
+          let value =
+            parseInt(
+              event.target.value,
+              10
+            );
+
+          if (!Number.isFinite(value)) {
+            value = 5;
           }
-        } catch (e) {}
-        // nothing loaded
-        actions = [];
-        undone = [];
-        redraw();
-      } catch (e) {
-        warn('loadSaved error', e);
-        actions = [];
-        undone = [];
-        redraw();
-      }
-    }
 
-    // send snapshot + structured data into chat
-    function sendToChat() {
-      try {
-        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
-        const oc = off.getContext('2d'); oc.fillStyle = '#ffffff'; oc.fillRect(0,0,off.width,off.height);
-        for (let i=0;i<actions.length;i++) renderAction(oc, actions[i]);
-        const dataUrl = off.toDataURL('image/png');
+          value =
+            Math.max(
+              3,
+              Math.min(
+                12,
+                value
+              )
+            );
 
-        const message = { id: Date.now(), sender: 'user', text: '', timestamp: new Date(), image: dataUrl, drawingData: JSON.parse(JSON.stringify(actions||[])), status: 'sent', type: 'drawing' };
-        if (typeof addMessage === 'function') {
-          try { addMessage(message); } catch (e) { warn('addMessage threw', e); fallbackPush(message); }
-        } else {
-          fallbackPush(message);
+          polygonSides = value;
+
+          event.target.value =
+            String(value);
         }
-        scheduleSave();
-        maybePartnerReply();
-      } catch (e) { err('sendToChat failed', e); }
+      );
     }
 
-    function fallbackPush(msg) {
-      try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('fallback pushed message; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); }
+
+    /*
+     * Canvas pointer events
+     */
+    if (canvas) {
+      canvas.addEventListener(
+        'pointerdown',
+        startDrawing,
+        {
+          passive: false
+        }
+      );
+
+      canvas.addEventListener(
+        'pointermove',
+        moveDrawing,
+        {
+          passive: false
+        }
+      );
+
+      canvas.addEventListener(
+        'pointerup',
+        finishDrawing,
+        {
+          passive: false
+        }
+      );
+
+      canvas.addEventListener(
+        'pointercancel',
+        finishDrawing,
+        {
+          passive: false
+        }
+      );
+
+      canvas.addEventListener(
+        'pointerleave',
+        event => {
+          /*
+           * Do not finish drawing here.
+           * This allows the user to move slightly
+           * outside the canvas without losing the stroke.
+           */
+        }
+      );
     }
 
-    function weightedChoice(items, weights) {
-      const total = weights.reduce((s,w)=>s+w,0);
-      let r = Math.random()*total;
-      for (let i=0;i<items.length;i++){ r -= weights[i]; if (r <= 0) return items[i]; }
-      return items[items.length-1];
+
+    /*
+     * Clicking the dark area around the modal closes it.
+     */
+    if (modal) {
+      modal.addEventListener(
+        'click',
+        event => {
+          if (
+            event.target === modal
+          ) {
+            close();
+          }
+        }
+      );
     }
-    function randomDoodleActions() {
-      const count = PARTNER_MIN_OBJ + Math.floor(Math.random() * (PARTNER_MAX_OBJ - PARTNER_MIN_OBJ + 1));
-      const acts = [];
-      for (let i=0;i<count;i++){
-        const kind = weightedChoice(['stroke','line','circle','rect','polygon'], [40,20,15,15,10]);
-        if (kind === 'stroke') {
-          let x = randRange(40, CANVAS_W-40), y = randRange(40, CANVAS_H-40);
-          const pts = []; const n = 4 + Math.floor(Math.random()*18);
-          for (let j=0;j<n;j++){ x += randRange(-40,40); y += randRange(-40,40); x = clamp(x,10,CANVAS_W-10); y = clamp(y,10,CANVAS_H-10); pts.push({x,y}); }
-          acts.push({ type:'stroke', mode:'brush', color: randomHsl(), width: 1 + Math.floor(Math.random()*8), points: pts });
-        } else if (kind === 'line') {
-          acts.push({ type:'line', x1:randRange(10,CANVAS_W-10), y1:randRange(10,CANVAS_H-10), x2:randRange(10,CANVAS_W-10), y2:randRange(10,CANVAS_H-10), color: randomHsl(), width:1 + Math.floor(Math.random()*6) });
-        } else if (kind === 'circle') {
-          const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(8, Math.min(140, CANVAS_W/3));
-          acts.push({ type:'circle', cx,cy,r, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
-        } else if (kind === 'rect') {
-          const x=randRange(10,CANVAS_W-140), y=randRange(10,CANVAS_H-140), w=randRange(20,180), h=randRange(20,180);
-          acts.push({ type:'rect', x,y,w,h, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
-        } else if (kind === 'polygon') {
-          const cx=randRange(40,CANVAS_W-40), cy=randRange(40,CANVAS_H-40), r=randRange(12,120), sides = 3 + Math.floor(Math.random()*6);
-          acts.push({ type:'polygon', cx,cy,r,sides, rotation: Math.random()*Math.PI*2, color: randomHsl(), width:1 + Math.floor(Math.random()*6), fill: Math.random()<0.35 ? randomTranslucent() : null });
+
+
+    /*
+     * Escape closes the drawing modal.
+     */
+    document.addEventListener(
+      'keydown',
+      event => {
+        if (
+          event.key === 'Escape' &&
+          modal &&
+          modal.style.display !== 'none'
+        ) {
+          close();
         }
       }
-      return acts;
-    }
-
-    function maybePartnerReply() {
-      if (Math.random() > PARTNER_REPLY_PROB) return;
-      const delay = 800 + Math.random()*2200;
-      setTimeout(() => {
-        const acts = randomDoodleActions();
-        const off = document.createElement('canvas'); off.width = CANVAS_W; off.height = CANVAS_H;
-        const oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0,0,off.width,off.height);
-        for (let i=0;i<acts.length;i++) renderAction(oc, acts[i]);
-        const url = off.toDataURL('image/png');
-        const msg = { id: Date.now()+1, sender:'partner', text:'', timestamp: new Date(), image: url, drawingData: acts, status: 'sent', type: 'drawing' };
-        if (typeof addMessage === 'function') {
-          try { addMessage(msg); } catch (e) { warn('addMessage partner failed', e); fallbackPush(msg); }
-        } else fallbackPush(msg);
-      }, delay);
-    }
-
-    function wireUI(ui) {
-      try {
-        ui.toolButtons.forEach(btn => btn.addEventListener('click', ()=> {
-          ui.toolButtons.forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTool = btn.dataset.tool || 'brush';
-        }));
-        ui.colorInput && ui.colorInput.addEventListener('input', (e)=> { currentColor = e.target.value; });
-        ui.sizeInput && ui.sizeInput.addEventListener('input', (e)=> { currentSize = parseInt(e.target.value,10) || 4; });
-        ui.polyInput && ui.polyInput.addEventListener('change', (e)=> { polySides = Math.max(3, Math.min(12, parseInt(e.target.value,10)||5)); });
-        ui.undoBtn && ui.undoBtn.addEventListener('click', ()=> undo());
-        ui.clearBtn && ui.clearBtn.addEventListener('click', ()=> { if (confirm('Clear canvas?')) clearAll(); });
-        ui.newBtn && ui.newBtn.addEventListener('click', ()=> { if (confirm('New canvas?')) clearAll(); });
-        ui.sendBtn && ui.sendBtn.addEventListener('click', ()=> sendToChat());
-        ui.closeBtn && ui.closeBtn.addEventListener('click', ()=> { ui.panel.style.display = 'none'; scheduleSave(); });
-      } catch (e) { warn('wireUI failed', e); }
-    }
-
-    // public API
-    return {
-      init: function() { setResolution(); attachEvents(); wireUI(ui); return loadSaved(); },
-      redraw: redraw,
-      undo,
-      clearAll,
-      sendToChat
-    };
+    );
   }
 
-  // Expose fallback push for engine use
-  function fallbackPush(msg) {
-    try { window.messages = window.messages || []; window.messages.push(msg); if (typeof renderMessages === 'function') renderMessages(); else log('fallback pushed message; renderMessages missing'); } catch (e) { warn('fallbackPush failed', e); }
-  }
 
-  // Startup orchestration: build UI, create engine, migrate when session ready
-  function ready(fn) {
-    if (document.readyState === 'complete' || document.readyState === 'interactive') setTimeout(fn, 20);
-    else document.addEventListener('DOMContentLoaded', fn, { once: true });
-  }
+  /* =========================================================
+     INITIALIZATION
+  ========================================================= */
 
-  ready(async () => {
-    try {
-      const ui = buildUI();
-      if (!ui || !ui.canvas) { warn('UI build failed'); return; }
-      ui.launcher.addEventListener('click', ()=> { ui.panel.style.display = (ui.panel.style.display === 'block') ? 'none' : 'block'; });
+  function initialize() {
+    if (initialized) return;
 
-      // Attempt migration when SESSION_ID becomes ready (non-blocking)
-      whenSessionReadyThenMigrate().then(()=> {
-        // after migration attempt, continue (engine will load saved from effective key)
-      }).catch(e=> warn('session migration error', e));
+    /*
+     * Find existing HTML.
+     */
+    modal =
+      document.getElementById(
+        'draw-together-modal'
+      );
 
-      // Create engine with the UI object closure variable available (engine uses effectiveKey() each save)
-      const engine = createEngine(ui);
-      if (engine && typeof engine.init === 'function') {
-        engine.init().then(()=> {
-          log('Draw Together initialized and canvas loaded.');
-        }).catch(e => { warn('engine.init failed', e); });
-      }
+    openButton =
+      document.getElementById(
+        'open-draw-together'
+      );
 
-      window.__drawTogether = window.__drawTogether || {};
-      window.__drawTogether.engine = engine;
+    closeButton =
+      document.getElementById(
+        'draw-close'
+      );
 
-      log('Draw Together ready (will migrate fallback storage when SESSION_ID becomes available).');
-    } catch (e) {
-      err('Draw Together startup error', e && e.stack ? e.stack : e);
+    sendButton =
+      document.getElementById(
+        'draw-send'
+      );
+
+    canvas =
+      document.getElementById(
+        'draw-canvas'
+      );
+
+    undoButton =
+      document.getElementById(
+        'draw-undo'
+      );
+
+    clearButton =
+      document.getElementById(
+        'draw-clear'
+      );
+
+    newButton =
+      document.getElementById(
+        'draw-new'
+      );
+
+    colorInput =
+      document.getElementById(
+        'draw-color'
+      );
+
+    sizeInput =
+      document.getElementById(
+        'draw-size'
+      );
+
+    sizeValue =
+      document.getElementById(
+        'draw-size-value'
+      );
+
+    sidesInput =
+      document.getElementById(
+        'draw-sides'
+      );
+
+    toolButtons =
+      Array.from(
+        document.querySelectorAll(
+          '#draw-toolbar .draw-tool'
+        )
+      );
+
+
+    /*
+     * Check required elements.
+     */
+    if (!modal) {
+      warn(
+        'Missing #draw-together-modal'
+      );
+      return;
     }
-  });
 
-  // Manual init for debugging
-  window.drawTogetherInit = function(){ try { const ui = buildUI(); const engine = createEngine(ui); engine && engine.init(); } catch(e){ err('manual init failed', e); } };
+    if (!canvas) {
+      warn(
+        'Missing #draw-canvas'
+      );
+      return;
+    }
+
+
+    /*
+     * Set initial values.
+     */
+    if (colorInput) {
+      currentColor =
+        colorInput.value ||
+        '#111111';
+    }
+
+    if (sizeInput) {
+      currentSize =
+        parseInt(
+          sizeInput.value,
+          10
+        ) || 4;
+    }
+
+    if (sidesInput) {
+      polygonSides =
+        parseInt(
+          sidesInput.value,
+          10
+        ) || 5;
+    }
+
+
+    /*
+     * Initialize canvas.
+     */
+    setupCanvas();
+
+    /*
+     * Bind controls.
+     */
+    bindUI();
+
+    /*
+     * Select brush.
+     */
+    selectTool('brush');
+
+    initialized = true;
+
+    log(
+      'Draw Together initialized.'
+    );
+  }
+
+
+  /* =========================================================
+     PUBLIC API
+  ========================================================= */
+
+  window.drawTogether = {
+
+    open,
+
+    close,
+
+    send: sendToPartner,
+
+    undo,
+
+    clear: clearDrawing,
+
+    newDrawing,
+
+    partnerDraw,
+
+    createRandomPartnerDrawing,
+
+    getActions: function () {
+      return actions.slice();
+    },
+
+    setPartnerDrawChance: function (
+      value
+    ) {
+      /*
+       * This is informational for now.
+       * The actual partner-response system should
+       * decide when to call partnerDraw().
+       */
+      return Math.max(
+        0,
+        Math.min(
+          1,
+          Number(value) || 0
+        )
+      );
+    },
+
+    PARTNER_DRAW_CHANCE
+  };
+
+
+  /* =========================================================
+     START
+  ========================================================= */
+
+  if (
+    document.readyState ===
+      'loading'
+  ) {
+    document.addEventListener(
+      'DOMContentLoaded',
+      initialize,
+      {
+        once: true
+      }
+    );
+  } else {
+    initialize();
+  }
+
+
+  /*
+   * Debug helper.
+   */
+  window.drawTogetherInit =
+    initialize;
 
 })();
