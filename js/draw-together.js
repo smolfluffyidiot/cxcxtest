@@ -1243,7 +1243,7 @@
          * so don't create another overlay.
          */
         modal.style.zIndex =
-            '2200';
+            '999999';
 
         redraw();
 
