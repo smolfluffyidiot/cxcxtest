@@ -524,58 +524,101 @@
   // --------------------------------------------------
 
   function sendDrawingToChat() {
-    if (!actions.length) {
-      alert('Draw something first!');
-      return;
-    }
-
-    const drawingActions =
-      JSON.parse(JSON.stringify(actions));
-
-    const image =
-      createDrawingImage(drawingActions);
-
-    const message = {
-      id: Date.now(),
-      sender: 'user',
-      text: '',
-      timestamp: new Date(),
-      image: image,
-      drawingData: drawingActions,
-      type: 'drawing',
-      status: 'sent'
-    };
-
-    /*
-     * THIS IS THE IMPORTANT PART.
-     *
-     * It uses your existing chat system.
-     */
-    if (typeof window.addMessage === 'function') {
       try {
-        window.addMessage(message);
+          if (!actions || !actions.length) {
+              alert('Draw something first!');
+              return;
+          }
+  
+          // Create PNG
+          const off = document.createElement('canvas');
+          off.width = CANVAS_W;
+          off.height = CANVAS_H;
+  
+          const oc = off.getContext('2d');
+  
+          // White background
+          oc.fillStyle = '#ffffff';
+          oc.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  
+          // Draw all actions
+          for (const action of actions) {
+              renderAction(oc, action);
+          }
+  
+          const dataUrl = off.toDataURL('image/png');
+  
+          // Copy drawing data
+          const drawingData =
+              JSON.parse(JSON.stringify(actions));
+  
+          const message = {
+              id: Date.now(),
+              sender: 'user',
+              text: '',
+              timestamp: new Date(),
+              image: dataUrl,
+              drawingData: drawingData,
+              status: 'sent',
+              type: 'drawing'
+          };
+  
+          console.log(
+              '[DrawTogether] Sending drawing message:',
+              message
+          );
+  
+          // ------------------------------------------
+          // YOUR EXISTING CHAT SYSTEM
+          // ------------------------------------------
+  
+          if (typeof window.addMessage === 'function') {
+  
+              console.log(
+                  '[DrawTogether] Calling addMessage()'
+              );
+  
+              window.addMessage(message);
+  
+          } else {
+  
+              console.warn(
+                  '[DrawTogether] addMessage() not found, using fallback.'
+              );
+  
+              window.messages =
+                  window.messages || [];
+  
+              window.messages.push(message);
+  
+              if (
+                  typeof window.renderMessages ===
+                  'function'
+              ) {
+                  window.renderMessages();
+              }
+          }
+  
+          // Close canvas after sending
+          closeModal();
+  
+          console.log(
+              '[DrawTogether] Drawing sent successfully.'
+          );
+  
       } catch (error) {
-        console.error(
-          '[DrawTogether] addMessage failed:',
-          error
-        );
+  
+          console.error(
+              '[DrawTogether] Failed to send drawing:',
+              error
+          );
+  
+          alert(
+              'Failed to send drawing. Check the console.'
+          );
       }
-    }
-
-    else {
-      // Fallback if your app doesn't expose addMessage
-      window.messages = window.messages || [];
-      window.messages.push(message);
-
-      if (typeof window.renderMessages === 'function') {
-        window.renderMessages();
-      }
-    }
-
-    closeModal();
-
-    log('Drawing sent to chat.');
   }
+
 
   // --------------------------------------------------
   // Partner drawing
