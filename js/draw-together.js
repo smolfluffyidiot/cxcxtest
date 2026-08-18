@@ -1,1116 +1,2278 @@
-/* js/draw-together.js */
+/* =========================================================
+   Draw Together
+   Uses the existing canvas modal in the HTML.
+
+   Expected HTML IDs:
+
+   #canvas-modal
+   #drawing-canvas
+   #canvas-toolbar
+   #canvas-send-to-chat
+   #canvas-save-close
+   #canvas-new
+   #canvas-undo
+   #canvas-clear
+
+   Existing chat function:
+
+   addMessage(message)
+
+   ========================================================= */
 
 (function () {
-  'use strict';
+    'use strict';
 
-  const CANVAS_W = 800;
-  const CANVAS_H = 500;
+    console.log('[DrawTogether] Script loaded');
 
-  // Chance that partner sends a drawing after a NORMAL USER MESSAGE.
-  // 0.05 = 5%
-  const PARTNER_DRAW_CHANCE = 1;
+    // =====================================================
+    // CONFIG
+    // =====================================================
 
-  const PARTNER_MIN_OBJECTS = 2;
-  const PARTNER_MAX_OBJECTS = 8;
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 500;
 
-  let canvas = null;
-  let ctx = null;
-  let modal = null;
+    /*
+     * Chance partner randomly sends a drawing after
+     * a USER message.
+     *
+     * 0.05 = 5%
+     */
+    const PARTNER_DRAW_CHANCE = 0.05;
 
-  let actions = [];
+    const PARTNER_MIN_OBJECTS = 2;
+    const PARTNER_MAX_OBJECTS = 8;
 
-  let currentTool = 'brush';
-  let currentColor = '#111111';
-  let currentSize = 4;
-  let polygonSides = 5;
+    // =====================================================
+    // STATE
+    // =====================================================
 
-  let drawing = false;
-  let startPoint = null;
-  let currentStroke = null;
-  let preview = null;
+    let canvas = null;
+    let ctx = null;
 
-  let initialized = false;
+    let actions = [];
 
-  // --------------------------------------------------
-  // Helpers
-  // --------------------------------------------------
+    let currentTool = 'brush';
+    let currentColor = '#111111';
+    let currentSize = 4;
+    let polygonSides = 5;
 
-  function log(...args) {
-    console.log('[DrawTogether]', ...args);
-  }
+    let isDrawing = false;
+    let startPoint = null;
+    let currentStroke = null;
+    let preview = null;
 
-  function warn(...args) {
-    console.warn('[DrawTogether]', ...args);
-  }
+    let initialized = false;
 
-  function randomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
+    // =====================================================
+    // HELPERS
+    // =====================================================
 
-  function randomFloat(min, max) {
-    return Math.random() * (max - min) + min;
-  }
-
-  function randomColor() {
-    const colors = [
-      '#ff6b6b',
-      '#ff9f43',
-      '#feca57',
-      '#1dd1a1',
-      '#48dbfb',
-      '#54a0ff',
-      '#5f27cd',
-      '#ff6bcb',
-      '#222f3e'
-    ];
-
-    return colors[randomInt(0, colors.length - 1)];
-  }
-
-  // --------------------------------------------------
-  // Modal
-  // --------------------------------------------------
-
-  function getModal() {
-    return document.getElementById('canvas-modal');
-  }
-
-  function openModal() {
-    modal = getModal();
-
-    if (!modal) {
-      console.error('[DrawTogether] #canvas-modal not found.');
-      return;
-    }
-
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-
-    // Important:
-    // Put it above blur/backdrop layers.
-    modal.style.position = 'fixed';
-    modal.style.inset = '0';
-    modal.style.zIndex = '2200';
-
-    // Some modal systems use opacity/visibility.
-    modal.style.visibility = 'visible';
-    modal.style.opacity = '1';
-
-    setupCanvas();
-
-    redraw();
-
-    log('Canvas modal opened.');
-  }
-
-  function closeModal() {
-    modal = getModal();
-
-    if (!modal) return;
-
-    modal.style.display = 'none';
-    modal.classList.remove('active');
-  }
-
-  // --------------------------------------------------
-  // Canvas
-  // --------------------------------------------------
-
-  function setupCanvas() {
-    canvas = document.getElementById('drawing-canvas');
-
-    if (!canvas) {
-      console.error('[DrawTogether] #drawing-canvas not found.');
-      return;
-    }
-
-    ctx = canvas.getContext('2d');
-
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
-
-    redraw();
-  }
-
-  function clearCanvas() {
-    actions = [];
-    preview = null;
-    currentStroke = null;
-
-    redraw();
-  }
-
-  function redraw() {
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
-
-    // White background
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-    for (const action of actions) {
-      renderAction(ctx, action);
-    }
-
-    if (preview) {
-      renderAction(ctx, preview, true);
-    }
-  }
-
-  function renderAction(context, action, isPreview) {
-    if (!action) return;
-
-    context.save();
-
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-
-    if (action.type === 'stroke') {
-      context.lineWidth = action.width || 4;
-
-      if (action.mode === 'eraser') {
-        context.globalCompositeOperation = 'destination-out';
-      } else {
-        context.strokeStyle = action.color || '#111111';
-      }
-
-      context.beginPath();
-
-      const points = action.points || [];
-
-      if (points.length > 0) {
-        context.moveTo(points[0].x, points[0].y);
-
-        for (let i = 1; i < points.length; i++) {
-          context.lineTo(points[i].x, points[i].y);
-        }
-      }
-
-      context.stroke();
-    }
-
-    else if (action.type === 'line') {
-      context.lineWidth = action.width || 4;
-      context.strokeStyle = action.color || '#111111';
-
-      context.beginPath();
-      context.moveTo(action.x1, action.y1);
-      context.lineTo(action.x2, action.y2);
-      context.stroke();
-    }
-
-    else if (action.type === 'rect') {
-      context.lineWidth = action.width || 4;
-      context.strokeStyle = action.color || '#111111';
-
-      context.strokeRect(
-        action.x,
-        action.y,
-        action.w,
-        action.h
-      );
-    }
-
-    else if (action.type === 'circle') {
-      context.lineWidth = action.width || 4;
-      context.strokeStyle = action.color || '#111111';
-
-      context.beginPath();
-      context.arc(
-        action.cx,
-        action.cy,
-        action.r,
-        0,
-        Math.PI * 2
-      );
-      context.stroke();
-    }
-
-    else if (action.type === 'polygon') {
-      const sides = Math.max(3, action.sides || 5);
-
-      context.lineWidth = action.width || 4;
-      context.strokeStyle = action.color || '#111111';
-
-      context.beginPath();
-
-      for (let i = 0; i < sides; i++) {
-        const angle =
-          (action.rotation || 0) +
-          (i / sides) * Math.PI * 2;
-
-        const x =
-          action.cx +
-          Math.cos(angle) * action.r;
-
-        const y =
-          action.cy +
-          Math.sin(angle) * action.r;
-
-        if (i === 0) {
-          context.moveTo(x, y);
-        } else {
-          context.lineTo(x, y);
-        }
-      }
-
-      context.closePath();
-      context.stroke();
-    }
-
-    context.restore();
-  }
-
-  // --------------------------------------------------
-  // Coordinates
-  // --------------------------------------------------
-
-  function getCanvasPoint(event) {
-    if (!canvas) return { x: 0, y: 0 };
-
-    const rect = canvas.getBoundingClientRect();
-
-    let clientX;
-    let clientY;
-
-    if (event.touches && event.touches.length) {
-      clientX = event.touches[0].clientX;
-      clientY = event.touches[0].clientY;
-    } else if (event.changedTouches && event.changedTouches.length) {
-      clientX = event.changedTouches[0].clientX;
-      clientY = event.changedTouches[0].clientY;
-    } else {
-      clientX = event.clientX;
-      clientY = event.clientY;
-    }
-
-    return {
-      x: (clientX - rect.left) * (CANVAS_W / rect.width),
-      y: (clientY - rect.top) * (CANVAS_H / rect.height)
-    };
-  }
-
-  // --------------------------------------------------
-  // Drawing
-  // --------------------------------------------------
-
-  function onPointerDown(event) {
-    if (!canvas) return;
-
-    event.preventDefault();
-
-    const point = getCanvasPoint(event);
-
-    drawing = true;
-    startPoint = point;
-
-    if (
-      currentTool === 'brush' ||
-      currentTool === 'eraser'
-    ) {
-      currentStroke = {
-        type: 'stroke',
-        mode:
-          currentTool === 'eraser'
-            ? 'eraser'
-            : 'brush',
-        color: currentColor,
-        width: currentSize,
-        points: [point]
-      };
-
-      actions.push(currentStroke);
-    }
-  }
-
-  function onPointerMove(event) {
-    if (!drawing) return;
-
-    event.preventDefault();
-
-    const point = getCanvasPoint(event);
-
-    // Brush
-    if (
-      currentTool === 'brush' ||
-      currentTool === 'eraser'
-    ) {
-      if (currentStroke) {
-        currentStroke.points.push(point);
-      }
-
-      redraw();
-      return;
-    }
-
-    // Line
-    if (currentTool === 'line') {
-      preview = {
-        type: 'line',
-        x1: startPoint.x,
-        y1: startPoint.y,
-        x2: point.x,
-        y2: point.y,
-        color: currentColor,
-        width: currentSize
-      };
-    }
-
-    // Rectangle
-    else if (currentTool === 'rect') {
-      preview = {
-        type: 'rect',
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        w: Math.abs(point.x - startPoint.x),
-        h: Math.abs(point.y - startPoint.y),
-        color: currentColor,
-        width: currentSize
-      };
-    }
-
-    // Circle
-    else if (currentTool === 'circle') {
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
-
-      preview = {
-        type: 'circle',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        color: currentColor,
-        width: currentSize
-      };
-    }
-
-    // Polygon
-    else if (currentTool === 'polygon') {
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
-
-      preview = {
-        type: 'polygon',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        sides: polygonSides,
-        rotation: 0,
-        color: currentColor,
-        width: currentSize
-      };
-    }
-
-    redraw();
-  }
-
-  function onPointerUp(event) {
-    if (!drawing) return;
-
-    event.preventDefault();
-
-    const point = getCanvasPoint(event);
-
-    drawing = false;
-
-    if (
-      currentTool === 'brush' ||
-      currentTool === 'eraser'
-    ) {
-      currentStroke = null;
-    }
-
-    else if (currentTool === 'line') {
-      actions.push({
-        type: 'line',
-        x1: startPoint.x,
-        y1: startPoint.y,
-        x2: point.x,
-        y2: point.y,
-        color: currentColor,
-        width: currentSize
-      });
-    }
-
-    else if (currentTool === 'rect') {
-      actions.push({
-        type: 'rect',
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        w: Math.abs(point.x - startPoint.x),
-        h: Math.abs(point.y - startPoint.y),
-        color: currentColor,
-        width: currentSize
-      });
-    }
-
-    else if (currentTool === 'circle') {
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
-
-      actions.push({
-        type: 'circle',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        color: currentColor,
-        width: currentSize
-      });
-    }
-
-    else if (currentTool === 'polygon') {
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
-
-      actions.push({
-        type: 'polygon',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        sides: polygonSides,
-        rotation: 0,
-        color: currentColor,
-        width: currentSize
-      });
-    }
-
-    preview = null;
-    startPoint = null;
-
-    redraw();
-  }
-
-  // --------------------------------------------------
-  // Undo
-  // --------------------------------------------------
-
-  function undo() {
-    if (!actions.length) return;
-
-    actions.pop();
-    redraw();
-  }
-
-  // --------------------------------------------------
-  // Export drawing
-  // --------------------------------------------------
-
-  function createDrawingImage(drawingActions) {
-    const offscreen = document.createElement('canvas');
-
-    offscreen.width = CANVAS_W;
-    offscreen.height = CANVAS_H;
-
-    const offCtx = offscreen.getContext('2d');
-
-    offCtx.fillStyle = '#ffffff';
-    offCtx.fillRect(
-      0,
-      0,
-      CANVAS_W,
-      CANVAS_H
-    );
-
-    for (const action of drawingActions) {
-      renderAction(offCtx, action);
-    }
-
-    return offscreen.toDataURL('image/png');
-  }
-
-  // --------------------------------------------------
-  // Send drawing to chat
-  // --------------------------------------------------
-
-  function sendDrawingToChat() {
-      try {
-          if (!actions || !actions.length) {
-              alert('Draw something first!');
-              return;
-          }
-  
-          // Create PNG
-          const off = document.createElement('canvas');
-          off.width = CANVAS_W;
-          off.height = CANVAS_H;
-  
-          const oc = off.getContext('2d');
-  
-          // White background
-          oc.fillStyle = '#ffffff';
-          oc.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  
-          // Draw all actions
-          for (const action of actions) {
-              renderAction(oc, action);
-          }
-  
-          const dataUrl = off.toDataURL('image/png');
-  
-          // Copy drawing data
-          const drawingData =
-              JSON.parse(JSON.stringify(actions));
-  
-          const message = {
-              id: Date.now(),
-              sender: 'user',
-              text: '',
-              timestamp: new Date(),
-              image: dataUrl,
-              drawingData: drawingData,
-              status: 'sent',
-              type: 'drawing'
-          };
-  
-          console.log(
-              '[DrawTogether] Sending drawing message:',
-              message
-          );
-  
-          // ------------------------------------------
-          // YOUR EXISTING CHAT SYSTEM
-          // ------------------------------------------
-  
-          if (typeof window.addMessage === 'function') {
-  
-              console.log(
-                  '[DrawTogether] Calling addMessage()'
-              );
-  
-              window.addMessage(message);
-  
-          } else {
-  
-              console.warn(
-                  '[DrawTogether] addMessage() not found, using fallback.'
-              );
-  
-              window.messages =
-                  window.messages || [];
-  
-              window.messages.push(message);
-  
-              if (
-                  typeof window.renderMessages ===
-                  'function'
-              ) {
-                  window.renderMessages();
-              }
-          }
-  
-          // Close canvas after sending
-          closeModal();
-  
-          console.log(
-              '[DrawTogether] Drawing sent successfully.'
-          );
-  
-      } catch (error) {
-  
-          console.error(
-              '[DrawTogether] Failed to send drawing:',
-              error
-          );
-  
-          alert(
-              'Failed to send drawing. Check the console.'
-          );
-      }
-  }
-
-
-  // --------------------------------------------------
-  // Partner drawing
-  // --------------------------------------------------
-
-  function generatePartnerDrawing() {
-    const result = [];
-
-    const count = randomInt(
-      PARTNER_MIN_OBJECTS,
-      PARTNER_MAX_OBJECTS
-    );
-
-    for (let i = 0; i < count; i++) {
-      const type = randomInt(1, 5);
-
-      if (type === 1) {
-        // Brush stroke
-
-        let x = randomFloat(40, CANVAS_W - 40);
-        let y = randomFloat(40, CANVAS_H - 40);
-
-        const points = [];
-
-        const pointCount = randomInt(4, 15);
-
-        for (let j = 0; j < pointCount; j++) {
-          x += randomFloat(-40, 40);
-          y += randomFloat(-40, 40);
-
-          x = Math.max(10, Math.min(CANVAS_W - 10, x));
-          y = Math.max(10, Math.min(CANVAS_H - 10, y));
-
-          points.push({ x, y });
-        }
-
-        result.push({
-          type: 'stroke',
-          mode: 'brush',
-          color: randomColor(),
-          width: randomInt(2, 8),
-          points
-        });
-      }
-
-      else if (type === 2) {
-        result.push({
-          type: 'line',
-          x1: randomFloat(20, CANVAS_W - 20),
-          y1: randomFloat(20, CANVAS_H - 20),
-          x2: randomFloat(20, CANVAS_W - 20),
-          y2: randomFloat(20, CANVAS_H - 20),
-          color: randomColor(),
-          width: randomInt(2, 6)
-        });
-      }
-
-      else if (type === 3) {
-        result.push({
-          type: 'circle',
-          cx: randomFloat(50, CANVAS_W - 50),
-          cy: randomFloat(50, CANVAS_H - 50),
-          r: randomFloat(15, 100),
-          color: randomColor(),
-          width: randomInt(2, 6)
-        });
-      }
-
-      else if (type === 4) {
-        result.push({
-          type: 'rect',
-          x: randomFloat(20, CANVAS_W - 180),
-          y: randomFloat(20, CANVAS_H - 180),
-          w: randomFloat(30, 150),
-          h: randomFloat(30, 150),
-          color: randomColor(),
-          width: randomInt(2, 6)
-        });
-      }
-
-      else {
-        result.push({
-          type: 'polygon',
-          cx: randomFloat(60, CANVAS_W - 60),
-          cy: randomFloat(60, CANVAS_H - 60),
-          r: randomFloat(20, 100),
-          sides: randomInt(3, 7),
-          rotation: randomFloat(0, Math.PI * 2),
-          color: randomColor(),
-          width: randomInt(2, 6)
-        });
-      }
-    }
-
-    return result;
-  }
-
-  function sendPartnerDrawing() {
-    const drawingActions = generatePartnerDrawing();
-
-    const image =
-      createDrawingImage(drawingActions);
-
-    const message = {
-      id: Date.now(),
-      sender: 'partner',
-      text: '',
-      timestamp: new Date(),
-      image: image,
-      drawingData: drawingActions,
-      type: 'drawing',
-      status: 'sent'
-    };
-
-    if (typeof window.addMessage === 'function') {
-      try {
-        window.addMessage(message);
-      } catch (error) {
-        console.error(
-          '[DrawTogether] Partner drawing failed:',
-          error
-        );
-      }
-    }
-
-    else {
-      window.messages = window.messages || [];
-      window.messages.push(message);
-
-      if (typeof window.renderMessages === 'function') {
-        window.renderMessages();
-      }
-    }
-
-    log('Partner sent a drawing.');
-  }
-
-  /*
-   * Call this after a USER message is sent.
-   *
-   * IMPORTANT:
-   * This does NOT trigger after every drawing specifically.
-   * It can happen after normal text messages too.
-   */
-  function maybePartnerDraw() {
-    if (Math.random() > PARTNER_DRAW_CHANCE) {
-      return;
-    }
-
-    const delay =
-      randomInt(1500, 5000);
-
-    setTimeout(() => {
-      sendPartnerDrawing();
-    }, delay);
-  }
-
-  // --------------------------------------------------
-  // Controls
-  // --------------------------------------------------
-
-  function setupControls() {
-    const toolbar =
-      document.getElementById('canvas-toolbar');
-
-    if (toolbar && !toolbar.dataset.dtReady) {
-      toolbar.dataset.dtReady = '1';
-
-      toolbar.innerHTML = `
-        <div class="dt-tools">
-
-          <div style="
-            display:grid;
-            grid-template-columns:repeat(3,1fr);
-            gap:6px;
-            margin-bottom:10px;
-          ">
-
-            <button type="button" data-tool="brush">
-              🖌 Brush
-            </button>
-
-            <button type="button" data-tool="eraser">
-              🧽 Eraser
-            </button>
-
-            <button type="button" data-tool="line">
-              ╱ Line
-            </button>
-
-            <button type="button" data-tool="rect">
-              □ Rect
-            </button>
-
-            <button type="button" data-tool="circle">
-              ○ Circle
-            </button>
-
-            <button type="button" data-tool="polygon">
-              ⬡ Polygon
-            </button>
-
-          </div>
-
-          <div style="
-            display:flex;
-            align-items:center;
-            gap:10px;
-            flex-wrap:wrap;
-          ">
-
-            <label>
-              Color
-              <input
-                type="color"
-                id="dt-color"
-                value="#111111"
-              >
-            </label>
-
-            <label style="flex:1;">
-              Size
-              <input
-                type="range"
-                id="dt-size"
-                min="1"
-                max="40"
-                value="4"
-                style="width:100%;"
-              >
-            </label>
-
-          </div>
-
-          <div style="
-            display:flex;
-            align-items:center;
-            gap:8px;
-            margin-top:8px;
-          ">
-
-            <label>
-              Sides
-              <input
-                type="number"
-                id="dt-poly-sides"
-                min="3"
-                max="12"
-                value="5"
-                style="width:55px;"
-              >
-            </label>
-
-          </div>
-
-        </div>
-      `;
-
-      const buttons =
-        toolbar.querySelectorAll('[data-tool]');
-
-      buttons.forEach(button => {
-        button.addEventListener('click', () => {
-
-          buttons.forEach(b =>
-            b.classList.remove('active')
-          );
-
-          button.classList.add('active');
-
-          currentTool =
-            button.dataset.tool;
-
-        });
-      });
-
-      // Default brush
-      const brush =
-        toolbar.querySelector('[data-tool="brush"]');
-
-      if (brush) {
-        brush.classList.add('active');
-      }
-
-      const color =
-        document.getElementById('dt-color');
-
-      if (color) {
-        color.addEventListener('input', e => {
-          currentColor = e.target.value;
-        });
-      }
-
-      const size =
-        document.getElementById('dt-size');
-
-      if (size) {
-        size.addEventListener('input', e => {
-          currentSize =
-            parseInt(e.target.value, 10) || 4;
-        });
-      }
-
-      const sides =
-        document.getElementById('dt-poly-sides');
-
-      if (sides) {
-        sides.addEventListener('input', e => {
-          polygonSides = Math.max(
-            3,
-            Math.min(
-              12,
-              parseInt(e.target.value, 10) || 5
+    function log() {
+        console.log.apply(
+            console,
+            ['[DrawTogether]'].concat(
+                Array.from(arguments)
             )
-          );
-        });
-      }
+        );
     }
 
-    // Buttons already in your HTML
-    const undo =
-      document.getElementById('canvas-undo');
-
-    if (undo && !undo.dataset.dtReady) {
-      undo.dataset.dtReady = '1';
-      undo.addEventListener('click', undo);
+    function warn() {
+        console.warn.apply(
+            console,
+            ['[DrawTogether]'].concat(
+                Array.from(arguments)
+            )
+        );
     }
 
-    const clear =
-      document.getElementById('canvas-clear');
+    function error() {
+        console.error.apply(
+            console,
+            ['[DrawTogether]'].concat(
+                Array.from(arguments)
+            )
+        );
+    }
 
-    if (clear && !clear.dataset.dtReady) {
-      clear.dataset.dtReady = '1';
+    function randomInt(min, max) {
+        return Math.floor(
+            Math.random() * (max - min + 1)
+        ) + min;
+    }
 
-      clear.addEventListener('click', () => {
-        if (confirm('Clear canvas?')) {
-          clearCanvas();
+    function randomFloat(min, max) {
+        return (
+            Math.random() * (max - min)
+        ) + min;
+    }
+
+    function randomColor() {
+
+        const colors = [
+            '#ff6b6b',
+            '#ff9f43',
+            '#feca57',
+            '#1dd1a1',
+            '#48dbfb',
+            '#54a0ff',
+            '#5f27cd',
+            '#ff6bcb',
+            '#222f3e'
+        ];
+
+        return colors[
+            randomInt(0, colors.length - 1)
+        ];
+    }
+
+    // =====================================================
+    // GET ELEMENTS
+    // =====================================================
+
+    function getElements() {
+
+        canvas =
+            document.getElementById(
+                'drawing-canvas'
+            );
+
+        if (!canvas) {
+            warn(
+                '#drawing-canvas not found'
+            );
+            return false;
         }
-      });
-    }
 
-    const send =
-      document.getElementById('canvas-send-to-chat');
+        ctx =
+            canvas.getContext('2d');
 
-    if (send && !send.dataset.dtReady) {
-      send.dataset.dtReady = '1';
-
-      send.addEventListener(
-        'click',
-        sendDrawingToChat
-      );
-    }
-
-    const close =
-      document.getElementById('canvas-save-close');
-
-    if (close && !close.dataset.dtReady) {
-      close.dataset.dtReady = '1';
-
-      close.addEventListener(
-        'click',
-        closeModal
-      );
-    }
-
-    const newButton =
-      document.getElementById('canvas-new');
-
-    if (newButton && !newButton.dataset.dtReady) {
-      newButton.dataset.dtReady = '1';
-
-      newButton.addEventListener('click', () => {
-        if (confirm('New canvas?')) {
-          clearCanvas();
+        if (!ctx) {
+            error(
+                'Could not get canvas context'
+            );
+            return false;
         }
-      });
-    }
-  }
 
-  // --------------------------------------------------
-  // Canvas events
-  // --------------------------------------------------
-
-  function setupCanvasEvents() {
-    if (!canvas || canvas.dataset.dtEvents) {
-      return;
+        return true;
     }
 
-    canvas.dataset.dtEvents = '1';
+    // =====================================================
+    // CANVAS
+    // =====================================================
 
-    canvas.addEventListener(
-      'pointerdown',
-      onPointerDown
-    );
+    function setupCanvas() {
 
-    canvas.addEventListener(
-      'pointermove',
-      onPointerMove
-    );
+        if (!getElements()) {
+            return false;
+        }
 
-    window.addEventListener(
-      'pointerup',
-      onPointerUp
-    );
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
 
-    canvas.style.touchAction = 'none';
-  }
+        canvas.style.touchAction = 'none';
 
-  // --------------------------------------------------
-  // Initialization
-  // --------------------------------------------------
+        redraw();
 
-  function init() {
-    if (initialized) {
-      return;
+        return true;
     }
 
-    initialized = true;
+    function redraw() {
 
-    modal = getModal();
+        if (!ctx) return;
 
-    if (!modal) {
-      warn(
-        '#canvas-modal not found yet. Waiting for DOM.'
-      );
+        ctx.clearRect(
+            0,
+            0,
+            CANVAS_WIDTH,
+            CANVAS_HEIGHT
+        );
 
-      initialized = false;
-      return;
+        // White background
+        ctx.save();
+
+        ctx.fillStyle = '#ffffff';
+
+        ctx.fillRect(
+            0,
+            0,
+            CANVAS_WIDTH,
+            CANVAS_HEIGHT
+        );
+
+        ctx.restore();
+
+        // Draw saved actions
+        for (
+            let i = 0;
+            i < actions.length;
+            i++
+        ) {
+            renderAction(
+                ctx,
+                actions[i],
+                false
+            );
+        }
+
+        // Draw preview
+        if (preview) {
+
+            renderAction(
+                ctx,
+                preview,
+                true
+            );
+        }
     }
 
-    setupControls();
+    // =====================================================
+    // RENDER ACTION
+    // =====================================================
 
-    canvas =
-      document.getElementById('drawing-canvas');
+    function renderAction(
+        context,
+        action,
+        isPreview
+    ) {
 
-    if (canvas) {
-      setupCanvas();
-      setupCanvasEvents();
+        if (!action) return;
+
+        context.save();
+
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+
+        if (isPreview) {
+            context.setLineDash([
+                6,
+                6
+            ]);
+        } else {
+            context.setLineDash([]);
+        }
+
+        // -----------------------------------------------
+        // STROKE
+        // -----------------------------------------------
+
+        if (action.type === 'stroke') {
+
+            context.lineWidth =
+                action.width || 4;
+
+            if (
+                action.mode ===
+                'eraser'
+            ) {
+
+                context.globalCompositeOperation =
+                    'destination-out';
+
+            } else {
+
+                context.globalCompositeOperation =
+                    'source-over';
+
+                context.strokeStyle =
+                    action.color ||
+                    '#111111';
+            }
+
+            const points =
+                action.points || [];
+
+            if (points.length > 0) {
+
+                context.beginPath();
+
+                context.moveTo(
+                    points[0].x,
+                    points[0].y
+                );
+
+                for (
+                    let i = 1;
+                    i < points.length;
+                    i++
+                ) {
+
+                    context.lineTo(
+                        points[i].x,
+                        points[i].y
+                    );
+                }
+
+                context.stroke();
+            }
+        }
+
+        // -----------------------------------------------
+        // LINE
+        // -----------------------------------------------
+
+        else if (
+            action.type === 'line'
+        ) {
+
+            context.lineWidth =
+                action.width || 4;
+
+            context.strokeStyle =
+                action.color ||
+                '#111111';
+
+            context.beginPath();
+
+            context.moveTo(
+                action.x1,
+                action.y1
+            );
+
+            context.lineTo(
+                action.x2,
+                action.y2
+            );
+
+            context.stroke();
+        }
+
+        // -----------------------------------------------
+        // RECTANGLE
+        // -----------------------------------------------
+
+        else if (
+            action.type === 'rect'
+        ) {
+
+            context.lineWidth =
+                action.width || 4;
+
+            context.strokeStyle =
+                action.color ||
+                '#111111';
+
+            context.strokeRect(
+                action.x,
+                action.y,
+                action.w,
+                action.h
+            );
+        }
+
+        // -----------------------------------------------
+        // CIRCLE
+        // -----------------------------------------------
+
+        else if (
+            action.type === 'circle'
+        ) {
+
+            context.lineWidth =
+                action.width || 4;
+
+            context.strokeStyle =
+                action.color ||
+                '#111111';
+
+            context.beginPath();
+
+            context.arc(
+                action.cx,
+                action.cy,
+                action.r,
+                0,
+                Math.PI * 2
+            );
+
+            context.stroke();
+        }
+
+        // -----------------------------------------------
+        // POLYGON
+        // -----------------------------------------------
+
+        else if (
+            action.type === 'polygon'
+        ) {
+
+            const sides =
+                Math.max(
+                    3,
+                    action.sides || 5
+                );
+
+            context.lineWidth =
+                action.width || 4;
+
+            context.strokeStyle =
+                action.color ||
+                '#111111';
+
+            context.beginPath();
+
+            for (
+                let i = 0;
+                i < sides;
+                i++
+            ) {
+
+                const angle =
+                    (action.rotation || 0) +
+                    (
+                        i / sides
+                    ) *
+                    Math.PI *
+                    2;
+
+                const x =
+                    action.cx +
+                    Math.cos(angle) *
+                    action.r;
+
+                const y =
+                    action.cy +
+                    Math.sin(angle) *
+                    action.r;
+
+                if (i === 0) {
+
+                    context.moveTo(
+                        x,
+                        y
+                    );
+
+                } else {
+
+                    context.lineTo(
+                        x,
+                        y
+                    );
+                }
+            }
+
+            context.closePath();
+
+            context.stroke();
+        }
+
+        context.restore();
     }
 
-    log('Draw Together initialized.');
-  }
+    // =====================================================
+    // COORDINATES
+    // =====================================================
 
-  // --------------------------------------------------
-  // Public API
-  // --------------------------------------------------
+    function getCanvasPoint(event) {
 
-  window.drawTogether = {
+        if (!canvas) {
+            return {
+                x: 0,
+                y: 0
+            };
+        }
 
-    open: function () {
-      init();
-      openModal();
-    },
+        const rect =
+            canvas.getBoundingClientRect();
 
-    close: function () {
-      closeModal();
-    },
+        let clientX;
+        let clientY;
 
-    clear: function () {
-      clearCanvas();
-    },
+        if (
+            event.touches &&
+            event.touches.length
+        ) {
 
-    undo: function () {
-      undo();
-    },
+            clientX =
+                event.touches[0].clientX;
 
-    sendDrawing: function () {
-      sendDrawingToChat();
-    },
+            clientY =
+                event.touches[0].clientY;
 
-    maybePartnerDraw: function () {
-      maybePartnerDraw();
-    },
+        } else if (
+            event.changedTouches &&
+            event.changedTouches.length
+        ) {
 
-    getActions: function () {
-      return actions;
+            clientX =
+                event.changedTouches[0].clientX;
+
+            clientY =
+                event.changedTouches[0].clientY;
+
+        } else {
+
+            clientX =
+                event.clientX;
+
+            clientY =
+                event.clientY;
+        }
+
+        return {
+
+            x:
+                (
+                    clientX -
+                    rect.left
+                ) *
+                (
+                    CANVAS_WIDTH /
+                    rect.width
+                ),
+
+            y:
+                (
+                    clientY -
+                    rect.top
+                ) *
+                (
+                    CANVAS_HEIGHT /
+                    rect.height
+                )
+        };
     }
-  };
 
-  // --------------------------------------------------
-  // Auto-init
-  // --------------------------------------------------
+    // =====================================================
+    // DRAWING EVENTS
+    // =====================================================
 
-  if (
-    document.readyState === 'loading'
-  ) {
-    document.addEventListener(
-      'DOMContentLoaded',
-      init
-    );
-  } else {
-    init();
-  }
+    function pointerDown(event) {
+
+        if (!canvas) return;
+
+        event.preventDefault();
+
+        try {
+            canvas.setPointerCapture(
+                event.pointerId
+            );
+        } catch (e) {}
+
+        const point =
+            getCanvasPoint(event);
+
+        isDrawing = true;
+
+        startPoint = point;
+
+        preview = null;
+
+        // Brush / Eraser
+        if (
+            currentTool === 'brush' ||
+            currentTool === 'eraser'
+        ) {
+
+            currentStroke = {
+
+                type: 'stroke',
+
+                mode:
+                    currentTool ===
+                    'eraser'
+                        ? 'eraser'
+                        : 'brush',
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize,
+
+                points: [
+                    point
+                ]
+            };
+
+            actions.push(
+                currentStroke
+            );
+
+            redraw();
+        }
+    }
+
+    function pointerMove(event) {
+
+        if (!isDrawing) return;
+
+        event.preventDefault();
+
+        const point =
+            getCanvasPoint(event);
+
+        // Brush
+        if (
+            currentTool === 'brush' ||
+            currentTool === 'eraser'
+        ) {
+
+            if (currentStroke) {
+
+                currentStroke.points.push(
+                    point
+                );
+            }
+
+            redraw();
+
+            return;
+        }
+
+        // Line
+        if (
+            currentTool === 'line'
+        ) {
+
+            preview = {
+
+                type: 'line',
+
+                x1:
+                    startPoint.x,
+
+                y1:
+                    startPoint.y,
+
+                x2:
+                    point.x,
+
+                y2:
+                    point.y,
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            };
+        }
+
+        // Rectangle
+        else if (
+            currentTool === 'rect'
+        ) {
+
+            preview = {
+
+                type: 'rect',
+
+                x:
+                    Math.min(
+                        startPoint.x,
+                        point.x
+                    ),
+
+                y:
+                    Math.min(
+                        startPoint.y,
+                        point.y
+                    ),
+
+                w:
+                    Math.abs(
+                        point.x -
+                        startPoint.x
+                    ),
+
+                h:
+                    Math.abs(
+                        point.y -
+                        startPoint.y
+                    ),
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            };
+        }
+
+        // Circle
+        else if (
+            currentTool === 'circle'
+        ) {
+
+            const dx =
+                point.x -
+                startPoint.x;
+
+            const dy =
+                point.y -
+                startPoint.y;
+
+            preview = {
+
+                type: 'circle',
+
+                cx:
+                    startPoint.x,
+
+                cy:
+                    startPoint.y,
+
+                r:
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    ),
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            };
+        }
+
+        // Polygon
+        else if (
+            currentTool === 'polygon'
+        ) {
+
+            const dx =
+                point.x -
+                startPoint.x;
+
+            const dy =
+                point.y -
+                startPoint.y;
+
+            preview = {
+
+                type: 'polygon',
+
+                cx:
+                    startPoint.x,
+
+                cy:
+                    startPoint.y,
+
+                r:
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    ),
+
+                sides:
+                    polygonSides,
+
+                rotation:
+                    0,
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            };
+        }
+
+        redraw();
+    }
+
+    function pointerUp(event) {
+
+        if (!isDrawing) return;
+
+        event.preventDefault();
+
+        const point =
+            getCanvasPoint(event);
+
+        isDrawing = false;
+
+        // Brush / Eraser
+        if (
+            currentTool === 'brush' ||
+            currentTool === 'eraser'
+        ) {
+
+            currentStroke = null;
+        }
+
+        // Line
+        else if (
+            currentTool === 'line'
+        ) {
+
+            actions.push({
+
+                type: 'line',
+
+                x1:
+                    startPoint.x,
+
+                y1:
+                    startPoint.y,
+
+                x2:
+                    point.x,
+
+                y2:
+                    point.y,
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            });
+        }
+
+        // Rectangle
+        else if (
+            currentTool === 'rect'
+        ) {
+
+            actions.push({
+
+                type: 'rect',
+
+                x:
+                    Math.min(
+                        startPoint.x,
+                        point.x
+                    ),
+
+                y:
+                    Math.min(
+                        startPoint.y,
+                        point.y
+                    ),
+
+                w:
+                    Math.abs(
+                        point.x -
+                        startPoint.x
+                    ),
+
+                h:
+                    Math.abs(
+                        point.y -
+                        startPoint.y
+                    ),
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            });
+        }
+
+        // Circle
+        else if (
+            currentTool === 'circle'
+        ) {
+
+            const dx =
+                point.x -
+                startPoint.x;
+
+            const dy =
+                point.y -
+                startPoint.y;
+
+            actions.push({
+
+                type: 'circle',
+
+                cx:
+                    startPoint.x,
+
+                cy:
+                    startPoint.y,
+
+                r:
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    ),
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            });
+        }
+
+        // Polygon
+        else if (
+            currentTool === 'polygon'
+        ) {
+
+            const dx =
+                point.x -
+                startPoint.x;
+
+            const dy =
+                point.y -
+                startPoint.y;
+
+            actions.push({
+
+                type: 'polygon',
+
+                cx:
+                    startPoint.x,
+
+                cy:
+                    startPoint.y,
+
+                r:
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    ),
+
+                sides:
+                    polygonSides,
+
+                rotation:
+                    0,
+
+                color:
+                    currentColor,
+
+                width:
+                    currentSize
+            });
+        }
+
+        preview = null;
+        startPoint = null;
+
+        redraw();
+    }
+
+    // =====================================================
+    // SETUP CANVAS EVENTS
+    // =====================================================
+
+    function setupCanvasEvents() {
+
+        if (!canvas) return;
+
+        if (
+            canvas.dataset.drawTogetherEvents ===
+            'true'
+        ) {
+            return;
+        }
+
+        canvas.dataset.drawTogetherEvents =
+            'true';
+
+        canvas.addEventListener(
+            'pointerdown',
+            pointerDown
+        );
+
+        canvas.addEventListener(
+            'pointermove',
+            pointerMove
+        );
+
+        window.addEventListener(
+            'pointerup',
+            pointerUp
+        );
+
+        window.addEventListener(
+            'pointercancel',
+            pointerUp
+        );
+    }
+
+    // =====================================================
+    // UNDO
+    // =====================================================
+
+    function undoDrawing() {
+
+        if (!actions.length) {
+            return;
+        }
+
+        actions.pop();
+
+        redraw();
+    }
+
+    // =====================================================
+    // CLEAR
+    // =====================================================
+
+    function clearDrawing() {
+
+        actions = [];
+
+        currentStroke = null;
+
+        preview = null;
+
+        redraw();
+    }
+
+    // =====================================================
+    // CREATE PNG
+    // =====================================================
+
+    function createImageFromActions(
+        drawingActions
+    ) {
+
+        const offscreen =
+            document.createElement(
+                'canvas'
+            );
+
+        offscreen.width =
+            CANVAS_WIDTH;
+
+        offscreen.height =
+            CANVAS_HEIGHT;
+
+        const offCtx =
+            offscreen.getContext('2d');
+
+        // White background
+        offCtx.fillStyle =
+            '#ffffff';
+
+        offCtx.fillRect(
+            0,
+            0,
+            CANVAS_WIDTH,
+            CANVAS_HEIGHT
+        );
+
+        for (
+            let i = 0;
+            i < drawingActions.length;
+            i++
+        ) {
+
+            renderAction(
+                offCtx,
+                drawingActions[i],
+                false
+            );
+        }
+
+        return offscreen.toDataURL(
+            'image/png'
+        );
+    }
+
+    // =====================================================
+    // SEND DRAWING
+    // =====================================================
+
+    function sendDrawingToChat() {
+
+        console.log(
+            '[DrawTogether] Sending drawing message:'
+        );
+
+        try {
+
+            if (
+                !actions ||
+                !actions.length
+            ) {
+
+                alert(
+                    'Draw something first!'
+                );
+
+                return;
+            }
+
+            const drawingData =
+                JSON.parse(
+                    JSON.stringify(
+                        actions
+                    )
+                );
+
+            const image =
+                createImageFromActions(
+                    drawingData
+                );
+
+            const message = {
+
+                id:
+                    Date.now(),
+
+                sender:
+                    'user',
+
+                text:
+                    '',
+
+                timestamp:
+                    new Date(),
+
+                image:
+                    image,
+
+                drawingData:
+                    drawingData,
+
+                status:
+                    'sent',
+
+                type:
+                    'drawing'
+            };
+
+            console.log(
+                '[DrawTogether] Message object:',
+                message
+            );
+
+            // ---------------------------------------------
+            // EXISTING CHAT SYSTEM
+            // ---------------------------------------------
+
+            if (
+                typeof window.addMessage ===
+                'function'
+            ) {
+
+                console.log(
+                    '[DrawTogether] Calling addMessage()'
+                );
+
+                window.addMessage(
+                    message
+                );
+
+            } else {
+
+                console.warn(
+                    '[DrawTogether] addMessage() does not exist. Using fallback.'
+                );
+
+                window.messages =
+                    window.messages ||
+                    [];
+
+                window.messages.push(
+                    message
+                );
+
+                if (
+                    typeof window.renderMessages ===
+                    'function'
+                ) {
+
+                    window.renderMessages();
+
+                } else {
+
+                    console.warn(
+                        '[DrawTogether] renderMessages() also does not exist.'
+                    );
+                }
+            }
+
+            console.log(
+                '[DrawTogether] Drawing sent successfully.'
+            );
+
+            closeModal();
+
+        } catch (err) {
+
+            console.error(
+                '[DrawTogether] Send drawing failed:',
+                err
+            );
+
+            alert(
+                'Failed to send drawing. Check the console.'
+            );
+        }
+    }
+
+    // =====================================================
+    // OPEN / CLOSE MODAL
+    // =====================================================
+
+    function openModal() {
+
+        const modal =
+            document.getElementById(
+                'canvas-modal'
+            );
+
+        if (!modal) {
+
+            error(
+                '#canvas-modal not found'
+            );
+
+            return;
+        }
+
+        if (!setupCanvas()) {
+            return;
+        }
+
+        setupCanvasEvents();
+
+        setupToolbar();
+
+        modal.style.display =
+            'flex';
+
+        modal.style.visibility =
+            'visible';
+
+        modal.style.opacity =
+            '1';
+
+        /*
+         * Your modal already has z-index:2200,
+         * so don't create another overlay.
+         */
+        modal.style.zIndex =
+            '2200';
+
+        redraw();
+
+        log(
+            'Modal opened'
+        );
+    }
+
+    function closeModal() {
+
+        const modal =
+            document.getElementById(
+                'canvas-modal'
+            );
+
+        if (!modal) return;
+
+        modal.style.display =
+            'none';
+
+        log(
+            'Modal closed'
+        );
+    }
+
+    // =====================================================
+    // TOOLBAR
+    // =====================================================
+
+    function setupToolbar() {
+
+        const toolbar =
+            document.getElementById(
+                'canvas-toolbar'
+            );
+
+        if (!toolbar) {
+
+            warn(
+                '#canvas-toolbar not found'
+            );
+
+            return;
+        }
+
+        /*
+         * Only build toolbar once.
+         */
+        if (
+            toolbar.dataset.drawTogetherReady ===
+            'true'
+        ) {
+
+            return;
+        }
+
+        toolbar.dataset.drawTogetherReady =
+            'true';
+
+        toolbar.innerHTML = `
+
+            <div
+                style="
+                    display:grid;
+                    grid-template-columns:
+                        repeat(3, minmax(0,1fr));
+                    gap:6px;
+                    margin-bottom:10px;
+                "
+            >
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="brush"
+                >
+                    🖌 Brush
+                </button>
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="eraser"
+                >
+                    🧽 Eraser
+                </button>
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="line"
+                >
+                    ╱ Line
+                </button>
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="rect"
+                >
+                    □ Rect
+                </button>
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="circle"
+                >
+                    ○ Circle
+                </button>
+
+                <button
+                    type="button"
+                    class="dt-tool"
+                    data-tool="polygon"
+                >
+                    ⬡ Polygon
+                </button>
+
+            </div>
+
+            <div
+                style="
+                    display:flex;
+                    gap:10px;
+                    align-items:center;
+                    flex-wrap:wrap;
+                "
+            >
+
+                <label
+                    style="
+                        display:flex;
+                        align-items:center;
+                        gap:5px;
+                    "
+                >
+                    Color
+
+                    <input
+                        id="dt-color"
+                        type="color"
+                        value="#111111"
+                    >
+                </label>
+
+                <label
+                    style="
+                        flex:1;
+                        min-width:120px;
+                    "
+                >
+                    Size
+
+                    <input
+                        id="dt-size"
+                        type="range"
+                        min="1"
+                        max="40"
+                        value="4"
+                        style="width:100%;"
+                    >
+                </label>
+
+            </div>
+
+            <div
+                style="
+                    display:flex;
+                    gap:8px;
+                    align-items:center;
+                    margin-top:8px;
+                "
+            >
+
+                <label>
+                    Polygon sides
+                </label>
+
+                <input
+                    id="dt-poly-sides"
+                    type="number"
+                    min="3"
+                    max="12"
+                    value="5"
+                    style="width:60px;"
+                >
+
+            </div>
+
+        `;
+
+        // ---------------------------------------------
+        // Tool buttons
+        // ---------------------------------------------
+
+        const toolButtons =
+            toolbar.querySelectorAll(
+                '.dt-tool'
+            );
+
+        toolButtons.forEach(
+            function (button) {
+
+                button.addEventListener(
+                    'click',
+                    function () {
+
+                        toolButtons.forEach(
+                            function (b) {
+                                b.classList.remove(
+                                    'active'
+                                );
+                            }
+                        );
+
+                        button.classList.add(
+                            'active'
+                        );
+
+                        currentTool =
+                            button.dataset.tool;
+
+                        log(
+                            'Tool:',
+                            currentTool
+                        );
+                    }
+                );
+            }
+        );
+
+        // Brush default
+        const brush =
+            toolbar.querySelector(
+                '[data-tool="brush"]'
+            );
+
+        if (brush) {
+            brush.classList.add(
+                'active'
+            );
+        }
+
+        // ---------------------------------------------
+        // Color
+        // ---------------------------------------------
+
+        const colorInput =
+            document.getElementById(
+                'dt-color'
+            );
+
+        if (colorInput) {
+
+            colorInput.addEventListener(
+                'input',
+                function (event) {
+
+                    currentColor =
+                        event.target.value;
+                }
+            );
+        }
+
+        // ---------------------------------------------
+        // Size
+        // ---------------------------------------------
+
+        const sizeInput =
+            document.getElementById(
+                'dt-size'
+            );
+
+        if (sizeInput) {
+
+            sizeInput.addEventListener(
+                'input',
+                function (event) {
+
+                    currentSize =
+                        parseInt(
+                            event.target.value,
+                            10
+                        ) || 4;
+                }
+            );
+        }
+
+        // ---------------------------------------------
+        // Polygon sides
+        // ---------------------------------------------
+
+        const sidesInput =
+            document.getElementById(
+                'dt-poly-sides'
+            );
+
+        if (sidesInput) {
+
+            sidesInput.addEventListener(
+                'input',
+                function (event) {
+
+                    polygonSides =
+                        Math.max(
+                            3,
+                            Math.min(
+                                12,
+                                parseInt(
+                                    event.target.value,
+                                    10
+                                ) || 5
+                            )
+                        );
+                }
+            );
+        }
+    }
+
+    // =====================================================
+    // BUTTON EVENTS
+    // =====================================================
+
+    function setupButtons() {
+
+        // ---------------------------------------------
+        // Send
+        // ---------------------------------------------
+
+        if (
+            !window.__drawTogetherSendHandler
+        ) {
+
+            window.__drawTogetherSendHandler =
+                true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest(
+                            '#canvas-send-to-chat'
+                        );
+
+                    if (!button) {
+                        return;
+                    }
+
+                    console.log(
+                        '[DrawTogether] Send to Chat button clicked'
+                    );
+
+                    event.preventDefault();
+
+                    event.stopPropagation();
+
+                    sendDrawingToChat();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Close
+        // ---------------------------------------------
+
+        if (
+            !window.__drawTogetherCloseHandler
+        ) {
+
+            window.__drawTogetherCloseHandler =
+                true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest(
+                            '#canvas-save-close'
+                        );
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    closeModal();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Undo
+        // ---------------------------------------------
+
+        if (
+            !window.__drawTogetherUndoHandler
+        ) {
+
+            window.__drawTogetherUndoHandler =
+                true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest(
+                            '#canvas-undo'
+                        );
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    undoDrawing();
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // Clear
+        // ---------------------------------------------
+
+        if (
+            !window.__drawTogetherClearHandler
+        ) {
+
+            window.__drawTogetherClearHandler =
+                true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest(
+                            '#canvas-clear'
+                        );
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    if (
+                        confirm(
+                            'Clear canvas?'
+                        )
+                    ) {
+
+                        clearDrawing();
+                    }
+
+                },
+                true
+            );
+        }
+
+        // ---------------------------------------------
+        // New
+        // ---------------------------------------------
+
+        if (
+            !window.__drawTogetherNewHandler
+        ) {
+
+            window.__drawTogetherNewHandler =
+                true;
+
+            document.addEventListener(
+                'click',
+                function (event) {
+
+                    const button =
+                        event.target.closest(
+                            '#canvas-new'
+                        );
+
+                    if (!button) {
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    if (
+                        confirm(
+                            'New canvas?'
+                        )
+                    ) {
+
+                        clearDrawing();
+                    }
+
+                },
+                true
+            );
+        }
+    }
+
+    // =====================================================
+    // PARTNER RANDOM DRAWING
+    // =====================================================
+
+    function generatePartnerDrawing() {
+
+        const result = [];
+
+        const count =
+            randomInt(
+                PARTNER_MIN_OBJECTS,
+                PARTNER_MAX_OBJECTS
+            );
+
+        for (
+            let i = 0;
+            i < count;
+            i++
+        ) {
+
+            const type =
+                randomInt(1, 5);
+
+            // -------------------------------------------
+            // Brush
+            // -------------------------------------------
+
+            if (type === 1) {
+
+                let x =
+                    randomFloat(
+                        40,
+                        CANVAS_WIDTH - 40
+                    );
+
+                let y =
+                    randomFloat(
+                        40,
+                        CANVAS_HEIGHT - 40
+                    );
+
+                const points = [];
+
+                const count =
+                    randomInt(4, 15);
+
+                for (
+                    let j = 0;
+                    j < count;
+                    j++
+                ) {
+
+                    x += randomFloat(
+                        -40,
+                        40
+                    );
+
+                    y += randomFloat(
+                        -40,
+                        40
+                    );
+
+                    x =
+                        Math.max(
+                            10,
+                            Math.min(
+                                CANVAS_WIDTH - 10,
+                                x
+                            )
+                        );
+
+                    y =
+                        Math.max(
+                            10,
+                            Math.min(
+                                CANVAS_HEIGHT - 10,
+                                y
+                            )
+                        );
+
+                    points.push({
+                        x: x,
+                        y: y
+                    });
+                }
+
+                result.push({
+
+                    type:
+                        'stroke',
+
+                    mode:
+                        'brush',
+
+                    color:
+                        randomColor(),
+
+                    width:
+                        randomInt(2, 8),
+
+                    points:
+                        points
+                });
+            }
+
+            // -------------------------------------------
+            // Line
+            // -------------------------------------------
+
+            else if (type === 2) {
+
+                result.push({
+
+                    type:
+                        'line',
+
+                    x1:
+                        randomFloat(
+                            20,
+                            CANVAS_WIDTH - 20
+                        ),
+
+                    y1:
+                        randomFloat(
+                            20,
+                            CANVAS_HEIGHT - 20
+                        ),
+
+                    x2:
+                        randomFloat(
+                            20,
+                            CANVAS_WIDTH - 20
+                        ),
+
+                    y2:
+                        randomFloat(
+                            20,
+                            CANVAS_HEIGHT - 20
+                        ),
+
+                    color:
+                        randomColor(),
+
+                    width:
+                        randomInt(2, 6)
+                });
+            }
+
+            // -------------------------------------------
+            // Circle
+            // -------------------------------------------
+
+            else if (type === 3) {
+
+                result.push({
+
+                    type:
+                        'circle',
+
+                    cx:
+                        randomFloat(
+                            50,
+                            CANVAS_WIDTH - 50
+                        ),
+
+                    cy:
+                        randomFloat(
+                            50,
+                            CANVAS_HEIGHT - 50
+                        ),
+
+                    r:
+                        randomFloat(
+                            15,
+                            100
+                        ),
+
+                    color:
+                        randomColor(),
+
+                    width:
+                        randomInt(2, 6)
+                });
+            }
+
+            // -------------------------------------------
+            // Rectangle
+            // -------------------------------------------
+
+            else if (type === 4) {
+
+                result.push({
+
+                    type:
+                        'rect',
+
+                    x:
+                        randomFloat(
+                            20,
+                            CANVAS_WIDTH - 180
+                        ),
+
+                    y:
+                        randomFloat(
+                            20,
+                            CANVAS_HEIGHT - 180
+                        ),
+
+                    w:
+                        randomFloat(
+                            30,
+                            150
+                        ),
+
+                    h:
+                        randomFloat(
+                            30,
+                            150
+                        ),
+
+                    color:
+                        randomColor(),
+
+                    width:
+                        randomInt(2, 6)
+                });
+            }
+
+            // -------------------------------------------
+            // Polygon
+            // -------------------------------------------
+
+            else {
+
+                result.push({
+
+                    type:
+                        'polygon',
+
+                    cx:
+                        randomFloat(
+                            60,
+                            CANVAS_WIDTH - 60
+                        ),
+
+                    cy:
+                        randomFloat(
+                            60,
+                            CANVAS_HEIGHT - 60
+                        ),
+
+                    r:
+                        randomFloat(
+                            20,
+                            100
+                        ),
+
+                    sides:
+                        randomInt(3, 7),
+
+                    rotation:
+                        randomFloat(
+                            0,
+                            Math.PI * 2
+                        ),
+
+                    color:
+                        randomColor(),
+
+                    width:
+                        randomInt(2, 6)
+                });
+            }
+        }
+
+        return result;
+    }
+
+    function sendPartnerDrawing() {
+
+        try {
+
+            const drawingData =
+                generatePartnerDrawing();
+
+            const image =
+                createImageFromActions(
+                    drawingData
+                );
+
+            const message = {
+
+                id:
+                    Date.now(),
+
+                sender:
+                    'partner',
+
+                text:
+                    '',
+
+                timestamp:
+                    new Date(),
+
+                image:
+                    image,
+
+                drawingData:
+                    drawingData,
+
+                status:
+                    'sent',
+
+                type:
+                    'drawing'
+            };
+
+            console.log(
+                '[DrawTogether] Partner drawing:',
+                message
+            );
+
+            if (
+                typeof window.addMessage ===
+                'function'
+            ) {
+
+                window.addMessage(
+                    message
+                );
+
+            } else {
+
+                window.messages =
+                    window.messages ||
+                    [];
+
+                window.messages.push(
+                    message
+                );
+
+                if (
+                    typeof window.renderMessages ===
+                    'function'
+                ) {
+
+                    window.renderMessages();
+                }
+            }
+
+        } catch (err) {
+
+            error(
+                'Partner drawing failed:',
+                err
+            );
+        }
+    }
+
+    /*
+     * Call this after a USER message is sent.
+     *
+     * 5% chance.
+     */
+    function maybePartnerDraw() {
+
+        const roll =
+            Math.random();
+
+        log(
+            'Partner drawing roll:',
+            roll,
+            'chance:',
+            PARTNER_DRAW_CHANCE
+        );
+
+        if (
+            roll >
+            PARTNER_DRAW_CHANCE
+        ) {
+
+            return;
+        }
+
+        const delay =
+            randomInt(
+                1500,
+                5000
+            );
+
+        log(
+            'Partner decided to draw. Delay:',
+            delay
+        );
+
+        setTimeout(
+            function () {
+
+                sendPartnerDrawing();
+
+            },
+            delay
+        );
+    }
+
+    // =====================================================
+    // PUBLIC API
+    // =====================================================
+
+    window.drawTogether = {
+
+        open:
+            function () {
+
+                initialize();
+
+                openModal();
+            },
+
+        close:
+            function () {
+
+                closeModal();
+            },
+
+        undo:
+            function () {
+
+                undoDrawing();
+            },
+
+        clear:
+            function () {
+
+                clearDrawing();
+            },
+
+        sendDrawing:
+            function () {
+
+                sendDrawingToChat();
+            },
+
+        maybePartnerDraw:
+            function () {
+
+                maybePartnerDraw();
+            },
+
+        getActions:
+            function () {
+
+                return actions;
+            }
+    };
+
+    // =====================================================
+    // INITIALIZE
+    // =====================================================
+
+    function initialize() {
+
+        if (initialized) {
+            return;
+        }
+
+        initialized = true;
+
+        log(
+            'Initializing...'
+        );
+
+        setupButtons();
+
+        setupToolbar();
+
+        if (
+            getElements()
+        ) {
+
+            setupCanvasEvents();
+        }
+
+        log(
+            'Initialization complete'
+        );
+    }
+
+    // =====================================================
+    // DOM READY
+    // =====================================================
+
+    function start() {
+
+        initialize();
+
+        log(
+            'Draw Together ready'
+        );
+    }
+
+    if (
+        document.readyState ===
+        'loading'
+    ) {
+
+        document.addEventListener(
+            'DOMContentLoaded',
+            start,
+            {
+                once: true
+            }
+        );
+
+    } else {
+
+        start();
+    }
 
 })();
