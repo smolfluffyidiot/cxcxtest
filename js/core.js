@@ -1059,16 +1059,55 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     }
 
     const isImageOnly = !msg.text && !!msg.image;
-    let content = msg.text ? `<div>${msg.text.replace(/\n/g, '<br>')}</div>` : '';
-    if (msg.image) content += `<img src="${msg.image}" class="message-image${isImageOnly ? ' message-image-only' : ''}" alt="图片" style="max-width:${isImageOnly ? '100px' : '100px'}; border-radius: 12px;${!isImageOnly ? ' margin-top: 6px;' : ''} cursor: pointer;" onclick="viewImage('${msg.image}')">`;
-    messageHTML += content;
 
-    const messageDiv = document.createElement('div');
-    if (isImageOnly) {
-        messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} message-image-bubble-none`;
-    } else {
-        messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} ${settings.bubbleStyle}`;
-    }
+        let content = msg.text
+            ? `<div>${msg.text.replace(/\n/g, '<br>')}</div>`
+            : '';
+        
+        if (msg.image) {
+            const imageClass = msg.type === 'drawing'
+                ? 'message-image message-drawing'
+                : 'message-image';
+        
+            content += `
+                <img
+                    src="${msg.image}"
+                    class="${imageClass}${isImageOnly ? ' message-image-only' : ''}"
+                    alt="${msg.type === 'drawing' ? '绘画' : '图片'}"
+                    style="
+                        display:block;
+                        width:auto;
+                        height:auto;
+                        max-width:280px;
+                        max-height:280px;
+                        object-fit:contain;
+                        border-radius:12px;
+                        ${!isImageOnly ? 'margin-top:6px;' : ''}
+                        cursor:pointer;
+                        background:#fff;
+                    "
+                    onclick="viewImage(this.src)"
+                >
+            `;
+        }
+        
+        messageHTML += content;
+
+
+        const messageDiv = document.createElement('div');
+        
+        if (isImageOnly) {
+            messageDiv.className =
+                `message message-${msg.sender === 'user' ? 'sent' : 'received'} message-image-bubble-none`;
+        
+            if (msg.type === 'drawing') {
+                messageDiv.classList.add('drawing-message');
+            }
+        } else {
+            messageDiv.className =
+                `message message-${msg.sender === 'user' ? 'sent' : 'received'} ${settings.bubbleStyle}`;
+        }
+
     messageDiv.innerHTML = messageHTML;
 
     let actionsHTML = '';
