@@ -1566,152 +1566,170 @@
     // BUTTON EVENTS
     // =====================================================
 
-    function setupButtons() {
+   function setupButtons() {
 
-        // ---------------------------------------------
-        // Send
-        // ---------------------------------------------
+    // =============================================
+    // SEND
+    // =============================================
 
-        if (
-            !window.__drawTogetherSendHandler
-        ) {
+    if (!window.__drawTogetherSendHandler) {
 
-            window.__drawTogetherSendHandler =
-                true;
+        window.__drawTogetherSendHandler = true;
 
-            document.addEventListener(
-                'click',
-                function (event) {
+        document.addEventListener(
+            'click',
+            function (event) {
 
-                    const button =
-                        event.target.closest(
-                            '#canvas-send-to-chat'
-                        );
+                const button =
+                    event.target.closest('#draw-send');
 
-                    if (!button) {
-                        return;
-                    }
+                if (!button) {
+                    return;
+                }
 
-                    console.log(
-                        '[DrawTogether] Send to Chat button clicked'
-                    );
+                event.preventDefault();
+                event.stopPropagation();
 
-                    event.preventDefault();
+                console.log(
+                    '[DrawTogether] Send button clicked'
+                );
 
-                    event.stopPropagation();
+                sendDrawingToChat();
 
-                    sendDrawingToChat();
+            },
+            true
+        );
+    }
 
-                },
-                true
-            );
-        }
 
-        // ---------------------------------------------
-        // Close
-        // ---------------------------------------------
+    // =============================================
+    // CLOSE
+    // =============================================
 
-        if (
-            !window.__drawTogetherCloseHandler
-        ) {
+    if (!window.__drawTogetherCloseHandler) {
 
-            window.__drawTogetherCloseHandler =
-                true;
+        window.__drawTogetherCloseHandler = true;
 
-            document.addEventListener(
-                'click',
-                function (event) {
+        document.addEventListener(
+            'click',
+            function (event) {
 
-                    const button =
-                        event.target.closest(
-                            '#canvas-save-close'
-                        );
+                const button =
+                    event.target.closest('#draw-close');
 
-                    if (!button) {
-                        return;
-                    }
+                if (!button) {
+                    return;
+                }
 
-                    event.preventDefault();
+                event.preventDefault();
+                event.stopPropagation();
 
-                    closeModal();
+                console.log(
+                    '[DrawTogether] Close button clicked'
+                );
 
-                },
-                true
-            );
-        }
+                closeModal();
 
-        // ---------------------------------------------
-        // Undo
-        // ---------------------------------------------
+            },
+            true
+        );
+    }
 
-        if (
-            !window.__drawTogetherUndoHandler
-        ) {
 
-            window.__drawTogetherUndoHandler =
-                true;
+    // =============================================
+    // UNDO
+    // =============================================
 
-            document.addEventListener(
-                'click',
-                function (event) {
+    if (!window.__drawTogetherUndoHandler) {
 
-                    const button =
-                        event.target.closest(
-                            '#canvas-undo'
-                        );
+        window.__drawTogetherUndoHandler = true;
 
-                    if (!button) {
-                        return;
-                    }
+        document.addEventListener(
+            'click',
+            function (event) {
 
-                    event.preventDefault();
+                const button =
+                    event.target.closest('#draw-undo');
 
-                    undoDrawing();
+                if (!button) {
+                    return;
+                }
 
-                },
-                true
-            );
-        }
+                event.preventDefault();
+                event.stopPropagation();
 
-        // ---------------------------------------------
-        // Clear
-        // ---------------------------------------------
+                undoDrawing();
 
-        if (
-            !window.__drawTogetherClearHandler
-        ) {
+            },
+            true
+        );
+    }
 
-            window.__drawTogetherClearHandler =
-                true;
 
-            document.addEventListener(
-                'click',
-                function (event) {
+    // =============================================
+    // CLEAR
+    // =============================================
 
-                    const button =
-                        event.target.closest(
-                            '#canvas-clear'
-                        );
+    if (!window.__drawTogetherClearHandler) {
 
-                    if (!button) {
-                        return;
-                    }
+        window.__drawTogetherClearHandler = true;
 
-                    event.preventDefault();
+        document.addEventListener(
+            'click',
+            function (event) {
 
-                    if (
-                        confirm(
-                            'Clear canvas?'
-                        )
-                    ) {
+                const button =
+                    event.target.closest('#draw-clear');
 
-                        clearDrawing();
-                    }
+                if (!button) {
+                    return;
+                }
 
-                },
-                true
-            );
-        }
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (confirm('Clear canvas?')) {
+                    clearDrawing();
+                }
+
+            },
+            true
+        );
+    }
+
+
+    // =============================================
+    // NEW
+    // =============================================
+
+    if (!window.__drawTogetherNewHandler) {
+
+        window.__drawTogetherNewHandler = true;
+
+        document.addEventListener(
+            'click',
+            function (event) {
+
+                const button =
+                    event.target.closest('#draw-new');
+
+                if (!button) {
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (confirm('New canvas?')) {
+                    clearDrawing();
+                }
+
+            },
+            true
+        );
+    }
+}
+
 
         // ---------------------------------------------
         // New
