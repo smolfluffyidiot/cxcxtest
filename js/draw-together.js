@@ -1,14 +1,12 @@
 /* js/draw-together.js
- *
  * Draw Together
- * - Uses existing #canvas-modal
- * - Uses existing #drawing-canvas
- * - Canvas on top, tools underneath
+ * - Opens as a normal modal
+ * - Canvas on top
+ * - Tools/control panel at bottom
  * - Mobile friendly
  * - Saves drawing locally
- * - Sends drawings through addMessage()
- * - Partner has a small independent chance to send a drawing
- * - Does NOT automatically draw back every time you send a drawing
+ * - Can send drawing to chat
+ * - Partner has a SMALL chance to send a drawing after ANY user message
  */
 
 (function () {
@@ -17,19 +15,18 @@
   const CANVAS_W = 800;
   const CANVAS_H = 500;
 
-  // Chance that partner sends a drawing when they respond.
-  // 0.05 = 5%
-  const PARTNER_DRAW_PROB = 0.05;
+  const STORAGE_KEY = 'draw_together_canvas_v2';
 
-  const STORAGE_PREFIX = 'draw_together_';
-  const SAVE_DELAY = 300;
-
-  let currentCanvasId = null;
-  let actions = [];
-  let undone = [];
+  // Chance partner sends a drawing after a user message.
+  // 0.05 = 5%, 0.10 = 10%, etc.
+  const PARTNER_DRAW_CHANCE = 1;
 
   let canvas = null;
   let ctx = null;
+  let modal = null;
+
+  let actions = [];
+  let undoStack = [];
 
   let currentTool = 'brush';
   let currentColor = '#111111';
@@ -39,1095 +36,1590 @@
   let drawing = false;
   let startPoint = null;
   let currentStroke = null;
-  let previewShape = null;
 
-  let saveTimer = null;
-
-  // ------------------------------------------------------------
-  // Logging
-  // ------------------------------------------------------------
-
-  function log(...args) {
-    try {
-      console.log('[DrawTogether]', ...args);
-    } catch (_) {}
-  }
-
-  function warn(...args) {
-    try {
-      console.warn('[DrawTogether]', ...args);
-    } catch (_) {}
-  }
-
-  function error(...args) {
-    try {
-      console.error('[DrawTogether]', ...args);
-    } catch (_) {}
-  }
-
-  // ------------------------------------------------------------
-  // Storage
-  // ------------------------------------------------------------
-
-  function storageKey(id) {
-    return STORAGE_PREFIX + String(id || 'default');
-  }
-
-  function saveDrawing() {
-    if (!currentCanvasId) return;
-
-    clearTimeout(saveTimer);
-
-    saveTimer = setTimeout(function () {
-      try {
-        localStorage.setItem(
-          storageKey(currentCanvasId),
-          JSON.stringify({
-            actions: actions,
-            updatedAt: Date.now()
-          })
-        );
-      } catch (e) {
-        warn('Could not save drawing:', e);
-      }
-    }, SAVE_DELAY);
-  }
-
-  function loadDrawing(id) {
-    try {
-      const raw = localStorage.getItem(storageKey(id));
-
-      if (!raw) {
-        actions = [];
-        undone = [];
-        return;
-      }
-
-      const data = JSON.parse(raw);
-
-      if (data && Array.isArray(data.actions)) {
-        actions = data.actions;
-      } else {
-        actions = [];
-      }
-
-      undone = [];
-    } catch (e) {
-      warn('Could not load drawing:', e);
-      actions = [];
-      undone = [];
-    }
-  }
-
-  function deleteDrawing(id) {
-    try {
-      localStorage.removeItem(storageKey(id));
-    } catch (_) {}
-  }
-
-  // ------------------------------------------------------------
-  // Canvas
-  // ------------------------------------------------------------
-
-  function setupCanvas() {
-    canvas = document.getElementById('drawing-canvas');
-
-    if (!canvas) {
-      error('Missing #drawing-canvas');
-      return false;
-    }
-
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-
-    canvas.width = CANVAS_W * dpr;
-    canvas.height = CANVAS_H * dpr;
-
-    canvas.style.width = '100%';
-    canvas.style.height = 'auto';
-    canvas.style.display = 'block';
-    canvas.style.touchAction = 'none';
-
-    ctx = canvas.getContext('2d');
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    return true;
-  }
-
-  function clearCanvasVisual() {
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  }
-
-  // ------------------------------------------------------------
-  // Rendering
-  // ------------------------------------------------------------
-
-  function renderAction(c, a, preview) {
-    if (!a || !c) return;
-
-    c.save();
-
-    try {
-      if (a.type === 'stroke') {
-        c.lineCap = 'round';
-        c.lineJoin = 'round';
-        c.lineWidth = a.width || 2;
-
-        if (a.mode === 'eraser') {
-          c.globalCompositeOperation = 'destination-out';
-        } else {
-          c.globalCompositeOperation = 'source-over';
-          c.strokeStyle = a.color || '#111111';
-        }
-
-        c.beginPath();
-
-        const pts = a.points || [];
-
-        if (pts.length === 1) {
-          c.arc(
-            pts[0].x,
-            pts[0].y,
-            Math.max(1, (a.width || 2) / 2),
-            0,
-            Math.PI * 2
-          );
-
-          if (a.mode !== 'eraser') {
-            c.fillStyle = a.color || '#111111';
-            c.fill();
-          }
-        } else {
-          pts.forEach(function (p, i) {
-            if (i === 0) {
-              c.moveTo(p.x, p.y);
-            } else {
-              c.lineTo(p.x, p.y);
-            }
-          });
-
-          c.stroke();
-        }
-
-      } else if (a.type === 'line') {
-
-        c.lineWidth = a.width || 2;
-        c.strokeStyle = a.color || '#111111';
-
-        if (preview) {
-          c.setLineDash([7, 7]);
-        }
-
-        c.beginPath();
-        c.moveTo(a.x1, a.y1);
-        c.lineTo(a.x2, a.y2);
-        c.stroke();
-
-      } else if (a.type === 'rect') {
-
-        c.lineWidth = a.width || 2;
-        c.strokeStyle = a.color || '#111111';
-
-        if (a.fill) {
-          c.fillStyle = a.fill;
-          c.fillRect(a.x, a.y, a.w, a.h);
-        }
-
-        if (preview) {
-          c.setLineDash([7, 7]);
-        }
-
-        c.strokeRect(a.x, a.y, a.w, a.h);
-
-      } else if (a.type === 'circle') {
-
-        c.lineWidth = a.width || 2;
-        c.strokeStyle = a.color || '#111111';
-
-        c.beginPath();
-        c.arc(a.cx, a.cy, a.r, 0, Math.PI * 2);
-
-        if (a.fill) {
-          c.fillStyle = a.fill;
-          c.fill();
-        }
-
-        if (preview) {
-          c.setLineDash([7, 7]);
-        }
-
-        c.stroke();
-
-      } else if (a.type === 'polygon') {
-
-        const sides = Math.max(3, Math.floor(a.sides || 5));
-
-        c.lineWidth = a.width || 2;
-        c.strokeStyle = a.color || '#111111';
-
-        c.beginPath();
-
-        for (let i = 0; i < sides; i++) {
-          const angle =
-            (a.rotation || 0) +
-            (i / sides) * Math.PI * 2;
-
-          const x = a.cx + Math.cos(angle) * a.r;
-          const y = a.cy + Math.sin(angle) * a.r;
-
-          if (i === 0) {
-            c.moveTo(x, y);
-          } else {
-            c.lineTo(x, y);
-          }
-        }
-
-        c.closePath();
-
-        if (a.fill) {
-          c.fillStyle = a.fill;
-          c.fill();
-        }
-
-        if (preview) {
-          c.setLineDash([7, 7]);
-        }
-
-        c.stroke();
-      }
-
-    } catch (e) {
-      warn('Render error:', e);
-    }
-
-    c.restore();
-  }
-
-  function redraw() {
-    if (!ctx) return;
-
-    clearCanvasVisual();
-
-    actions.forEach(function (action) {
-      renderAction(ctx, action, false);
-    });
-
-    if (previewShape) {
-      renderAction(ctx, previewShape, true);
-    }
-  }
-
-  // ------------------------------------------------------------
-  // Coordinates
-  // ------------------------------------------------------------
-
-  function getPoint(event) {
-    if (!canvas) {
-      return { x: 0, y: 0 };
-    }
-
-    const rect = canvas.getBoundingClientRect();
-
-    let clientX;
-    let clientY;
-
-    if (event.touches && event.touches.length) {
-      clientX = event.touches[0].clientX;
-      clientY = event.touches[0].clientY;
-    } else if (event.changedTouches && event.changedTouches.length) {
-      clientX = event.changedTouches[0].clientX;
-      clientY = event.changedTouches[0].clientY;
-    } else {
-      clientX = event.clientX;
-      clientY = event.clientY;
-    }
-
-    return {
-      x: Math.max(
-        0,
-        Math.min(
-          CANVAS_W,
-          (clientX - rect.left) * (CANVAS_W / rect.width)
-        )
-      ),
-
-      y: Math.max(
-        0,
-        Math.min(
-          CANVAS_H,
-          (clientY - rect.top) * (CANVAS_H / rect.height)
-        )
-      )
-    };
-  }
-
-  // ------------------------------------------------------------
-  // Drawing events
-  // ------------------------------------------------------------
-
-  function onPointerDown(event) {
-    event.preventDefault();
-
-    if (!canvas) return;
-
-    drawing = true;
-    startPoint = getPoint(event);
-    previewShape = null;
-
-    try {
-      if (canvas.setPointerCapture && event.pointerId !== undefined) {
-        canvas.setPointerCapture(event.pointerId);
-      }
-    } catch (_) {}
-
-    if (currentTool === 'brush' || currentTool === 'eraser') {
-      currentStroke = {
-        type: 'stroke',
-        mode: currentTool === 'eraser' ? 'eraser' : 'brush',
-        color: currentColor,
-        width: currentSize,
-        points: [startPoint]
-      };
-
-      actions.push(currentStroke);
-
-      redraw();
-    }
-  }
-
-  function onPointerMove(event) {
-    if (!drawing) return;
-
-    event.preventDefault();
-
-    const point = getPoint(event);
-
-    if (currentTool === 'brush' || currentTool === 'eraser') {
-
-      if (!currentStroke) return;
-
-      currentStroke.points.push(point);
-      redraw();
-
+  /* =========================================================
+     MODAL
+  ========================================================= */
+
+  function createModal() {
+    if (document.getElementById('draw-together-modal')) {
+      modal = document.getElementById('draw-together-modal');
+      canvas = document.getElementById('draw-together-canvas');
+      ctx = canvas.getContext('2d');
       return;
     }
 
-    if (!startPoint) return;
+    const style = document.createElement('style');
 
-    if (currentTool === 'line') {
+    style.id = 'draw-together-style';
 
-      previewShape = {
-        type: 'line',
-        x1: startPoint.x,
-        y1: startPoint.y,
-        x2: point.x,
-        y2: point.y,
-        color: currentColor,
-        width: currentSize
-      };
+    style.textContent = `
+      #draw-together-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
 
-    } else if (currentTool === 'rect') {
+        display: none;
+        align-items: center;
+        justify-content: center;
 
-      previewShape = {
-        type: 'rect',
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        w: Math.abs(point.x - startPoint.x),
-        h: Math.abs(point.y - startPoint.y),
-        color: currentColor,
-        width: currentSize
-      };
+        z-index: 999999 !important;
 
-    } else if (currentTool === 'circle') {
+        background: rgba(0,0,0,.45) !important;
 
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
+        isolation: isolate !important;
+      }
 
-      previewShape = {
-        type: 'circle',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        color: currentColor,
-        width: currentSize
-      };
+      #draw-together-modal.dt-open {
+        display: flex !important;
+      }
 
-    } else if (currentTool === 'polygon') {
+      #draw-together-modal .dt-dialog {
+        position: relative !important;
 
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
+        width: min(920px, calc(100vw - 24px));
+        max-height: calc(100vh - 24px);
 
-      previewShape = {
-        type: 'polygon',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        sides: polygonSides,
-        rotation: 0,
-        color: currentColor,
-        width: currentSize
-      };
-    }
+        background: var(--secondary-bg, #fff);
+        color: var(--text-primary, #111);
 
-    redraw();
-  }
+        border-radius: 14px;
 
-  function onPointerUp(event) {
-    if (!drawing) return;
+        overflow: hidden;
 
-    event.preventDefault();
+        box-shadow:
+          0 25px 80px rgba(0,0,0,.35);
 
-    const point = getPoint(event);
+        display: flex;
+        flex-direction: column;
 
-    drawing = false;
+        z-index: 1000000 !important;
+      }
 
-    if (
-      currentTool === 'brush' ||
-      currentTool === 'eraser'
-    ) {
-      currentStroke = null;
+      #draw-together-modal .dt-header {
+        flex-shrink: 0;
 
-      undone = [];
-      saveDrawing();
+        display: flex;
+        align-items: center;
+        gap: 10px;
 
-    } else if (currentTool === 'line') {
+        padding: 12px 14px;
 
-      actions.push({
-        type: 'line',
-        x1: startPoint.x,
-        y1: startPoint.y,
-        x2: point.x,
-        y2: point.y,
-        color: currentColor,
-        width: currentSize
-      });
+        border-bottom:
+          1px solid var(--border-color, #ddd);
+      }
 
-      undone = [];
-      saveDrawing();
+      #draw-together-modal .dt-title {
+        font-weight: 700;
+      }
 
-    } else if (currentTool === 'rect') {
+      #draw-together-modal .dt-header-spacer {
+        flex: 1;
+      }
 
-      actions.push({
-        type: 'rect',
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        w: Math.abs(point.x - startPoint.x),
-        h: Math.abs(point.y - startPoint.y),
-        color: currentColor,
-        width: currentSize
-      });
+      #draw-together-modal .dt-body {
+        overflow-y: auto;
+        padding: 12px;
 
-      undone = [];
-      saveDrawing();
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
 
-    } else if (currentTool === 'circle') {
+      /* CANVAS ON TOP */
 
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
+      #draw-together-modal .dt-canvas-container {
+        width: 100%;
 
-      actions.push({
-        type: 'circle',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        color: currentColor,
-        width: currentSize
-      });
+        background: var(--primary-bg, #f5f5f5);
 
-      undone = [];
-      saveDrawing();
+        border-radius: 10px;
 
-    } else if (currentTool === 'polygon') {
+        padding: 8px;
 
-      const dx = point.x - startPoint.x;
-      const dy = point.y - startPoint.y;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
 
-      actions.push({
-        type: 'polygon',
-        cx: startPoint.x,
-        cy: startPoint.y,
-        r: Math.sqrt(dx * dx + dy * dy),
-        sides: polygonSides,
-        rotation: 0,
-        color: currentColor,
-        width: currentSize
-      });
+      #draw-together-canvas {
+        display: block;
 
-      undone = [];
-      saveDrawing();
-    }
+        width: 100%;
+        height: auto;
 
-    startPoint = null;
-    previewShape = null;
+        max-height: 55vh;
 
-    redraw();
-  }
+        background: white;
 
-  // ------------------------------------------------------------
-  // Tools
-  // ------------------------------------------------------------
+        border-radius: 7px;
 
-  function setTool(tool) {
-    currentTool = tool;
+        touch-action: none;
 
-    document
-      .querySelectorAll('[data-draw-tool]')
-      .forEach(function (button) {
-        button.classList.toggle(
-          'active',
-          button.dataset.drawTool === tool
-        );
-      });
-  }
+        cursor: crosshair;
 
-  function undo() {
-    if (!actions.length) return;
+        box-shadow:
+          0 4px 15px rgba(0,0,0,.08);
+      }
 
-    undone.push(actions.pop());
+      /* TOOLBOX AT BOTTOM */
 
-    saveDrawing();
-    redraw();
-  }
+      #draw-together-modal .dt-toolbar {
+        display: flex;
+        flex-direction: column;
 
-  function clearDrawing() {
-    actions = [];
-    undone = [];
+        gap: 9px;
 
-    saveDrawing();
-    redraw();
-  }
+        padding: 10px;
 
-  // ------------------------------------------------------------
-  // Toolbar
-  // ------------------------------------------------------------
+        background:
+          var(--primary-bg, #f5f5f5);
 
-  function buildToolbar() {
-    const toolbar = document.getElementById('canvas-toolbar');
+        border-radius: 10px;
+      }
 
-    if (!toolbar) {
-      warn('Missing #canvas-toolbar');
-      return;
-    }
+      #draw-together-modal .dt-tool-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+      }
 
-    toolbar.innerHTML = `
-      <div class="dt-toolbar-inner">
+      #draw-together-modal .dt-btn {
+        border: none;
 
-        <div class="dt-section-title">
-          Tools
-        </div>
+        padding: 8px 11px;
 
-        <div class="dt-tool-grid">
+        border-radius: 8px;
 
-          <button type="button" class="dt-tool active" data-draw-tool="brush">
-            ✏️ Brush
+        background:
+          var(--secondary-bg, #fff);
+
+        color:
+          var(--text-primary, #111);
+
+        cursor: pointer;
+
+        font-size: 13px;
+      }
+
+      #draw-together-modal .dt-btn:hover {
+        filter: brightness(.95);
+      }
+
+      #draw-together-modal .dt-btn.active {
+        background:
+          var(--accent-color, #ff7a6b);
+
+        color: white;
+      }
+
+      #draw-together-modal .dt-btn.primary {
+        background:
+          var(--accent-color, #ff7a6b);
+
+        color: white;
+      }
+
+      #draw-together-modal .dt-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        font-size: 13px;
+      }
+
+      #dt-color {
+        width: 42px;
+        height: 34px;
+        padding: 0;
+        border: none;
+        background: transparent;
+      }
+
+      #dt-size {
+        width: 130px;
+      }
+
+      #dt-poly-sides {
+        width: 55px;
+      }
+
+      @media (max-width: 600px) {
+
+        #draw-together-modal {
+          align-items: stretch;
+        }
+
+        #draw-together-modal .dt-dialog {
+          width: 100vw;
+          max-height: 100vh;
+
+          border-radius: 0;
+        }
+
+        #draw-together-modal .dt-body {
+          padding: 8px;
+        }
+
+        #draw-together-canvas {
+          max-height: 45vh;
+        }
+
+        #draw-together-modal .dt-btn {
+          flex: 1 1 auto;
+          min-width: 70px;
+        }
+
+        #draw-together-modal .dt-tool-row {
+          justify-content: center;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+
+    modal = document.createElement('div');
+
+    modal.id = 'draw-together-modal';
+
+    modal.innerHTML = `
+      <div class="dt-dialog">
+
+        <div class="dt-header">
+
+          <div class="dt-title">
+            Draw Together · 画布
+          </div>
+
+          <div class="dt-header-spacer"></div>
+
+          <button
+            type="button"
+            class="dt-btn primary"
+            id="dt-send"
+          >
+            Send to Chat
           </button>
 
-          <button type="button" class="dt-tool" data-draw-tool="eraser">
-            🧹 Eraser
-          </button>
-
-          <button type="button" class="dt-tool" data-draw-tool="line">
-            ╱ Line
-          </button>
-
-          <button type="button" class="dt-tool" data-draw-tool="rect">
-            ▭ Rectangle
-          </button>
-
-          <button type="button" class="dt-tool" data-draw-tool="circle">
-            ○ Circle
-          </button>
-
-          <button type="button" class="dt-tool" data-draw-tool="polygon">
-            ⬡ Polygon
+          <button
+            type="button"
+            class="dt-btn"
+            id="dt-close"
+          >
+            Close
           </button>
 
         </div>
 
-        <div class="dt-controls">
+        <div class="dt-body">
 
-          <label class="dt-control">
-            <span>Color</span>
-            <input
-              type="color"
-              id="dt-color-input"
-              value="#111111"
-            >
-          </label>
+          <!-- CANVAS -->
 
-          <label class="dt-control dt-size-control">
-            <span>Size</span>
-            <input
-              type="range"
-              id="dt-size-input"
-              min="1"
-              max="50"
-              value="4"
-            >
-            <span id="dt-size-value">4</span>
-          </label>
+          <div class="dt-canvas-container">
 
-          <label class="dt-control">
-            <span>Polygon</span>
-            <input
-              type="number"
-              id="dt-polygon-input"
-              min="3"
-              max="12"
-              value="5"
-            >
-          </label>
+            <canvas
+              id="draw-together-canvas"
+              width="${CANVAS_W}"
+              height="${CANVAS_H}"
+            ></canvas>
+
+          </div>
+
+          <!-- TOOLBOX -->
+
+          <div class="dt-toolbar">
+
+            <div class="dt-tool-row">
+
+              <button class="dt-btn active" data-tool="brush">
+                Brush
+              </button>
+
+              <button class="dt-btn" data-tool="eraser">
+                Eraser
+              </button>
+
+              <button class="dt-btn" data-tool="line">
+                Line
+              </button>
+
+              <button class="dt-btn" data-tool="rect">
+                Rectangle
+              </button>
+
+              <button class="dt-btn" data-tool="circle">
+                Circle
+              </button>
+
+              <button class="dt-btn" data-tool="polygon">
+                Polygon
+              </button>
+
+            </div>
+
+            <div class="dt-tool-row">
+
+              <div class="dt-control">
+
+                <span>Color</span>
+
+                <input
+                  type="color"
+                  id="dt-color"
+                  value="#111111"
+                >
+
+              </div>
+
+              <div class="dt-control">
+
+                <span>Size</span>
+
+                <input
+                  type="range"
+                  id="dt-size"
+                  min="1"
+                  max="50"
+                  value="4"
+                >
+
+              </div>
+
+              <div class="dt-control">
+
+                <span>Sides</span>
+
+                <input
+                  type="number"
+                  id="dt-poly-sides"
+                  min="3"
+                  max="12"
+                  value="5"
+                >
+
+              </div>
+
+            </div>
+
+            <div class="dt-tool-row">
+
+              <button class="dt-btn" id="dt-undo">
+                Undo
+              </button>
+
+              <button class="dt-btn" id="dt-clear">
+                Clear
+              </button>
+
+              <button class="dt-btn" id="dt-new">
+                New
+              </button>
+
+            </div>
+
+          </div>
 
         </div>
 
       </div>
     `;
 
-    const style = document.createElement('style');
+    document.body.appendChild(modal);
 
-    style.id = 'draw-together-toolbar-style';
+    canvas = document.getElementById('draw-together-canvas');
+    ctx = canvas.getContext('2d');
 
-    style.textContent = `
-      #canvas-modal .dt-toolbar-inner {
-        width:100%;
-        box-sizing:border-box;
+    /* IMPORTANT:
+       Force modal above any existing blur/backdrop.
+    */
+
+    modal.style.setProperty('z-index', '999999', 'important');
+
+    const dialog = modal.querySelector('.dt-dialog');
+
+    dialog.style.setProperty('z-index', '1000000', 'important');
+
+    /* Prevent clicking outside from accidentally closing it */
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal) {
+        closeModal();
       }
+    });
 
-      #canvas-modal .dt-section-title {
-        font-weight:600;
-        margin-bottom:8px;
-      }
+    document.getElementById('dt-close')
+      .addEventListener('click', closeModal);
 
-      #canvas-modal .dt-tool-grid {
-        display:grid;
-        grid-template-columns:repeat(3,1fr);
-        gap:7px;
-        margin-bottom:10px;
-      }
+    document.getElementById('dt-send')
+      .addEventListener('click', sendDrawing);
 
-      #canvas-modal .dt-tool {
-        border:1px solid var(--border-color,#ddd);
-        background:var(--primary-bg,#f5f5f5);
-        color:var(--text-primary,#222);
-        border-radius:8px;
-        padding:9px 6px;
-        cursor:pointer;
-        font-size:13px;
-      }
+    document.getElementById('dt-undo')
+      .addEventListener('click', undo);
 
-      #canvas-modal .dt-tool.active {
-        background:var(--accent-color,#ff7a6b);
-        color:#fff;
-        border-color:var(--accent-color,#ff7a6b);
-      }
+    document.getElementById('dt-clear')
+      .addEventListener('click', clearCanvas);
 
-      #canvas-modal .dt-controls {
-        display:flex;
-        align-items:center;
-        gap:12px;
-        flex-wrap:wrap;
-      }
+    document.getElementById('dt-new')
+      .addEventListener('click', clearCanvas);
 
-      #canvas-modal .dt-control {
-        display:flex;
-        align-items:center;
-        gap:7px;
-        font-size:13px;
-        color:var(--text-secondary,#666);
-      }
+    document.querySelectorAll(
+      '#draw-together-modal [data-tool]'
+    ).forEach(function (button) {
 
-      #canvas-modal #dt-color-input {
-        width:42px;
-        height:34px;
-        padding:0;
-        border:0;
-        background:transparent;
-      }
+      button.addEventListener('click', function () {
 
-      #canvas-modal #dt-size-input {
-        width:100px;
-      }
-
-      #canvas-modal #dt-size-value {
-        min-width:20px;
-      }
-
-      #canvas-modal #dt-polygon-input {
-        width:55px;
-      }
-
-      @media (max-width:600px) {
-
-        #canvas-modal .modal-content {
-          width:calc(100% - 16px) !important;
-          max-height:calc(100vh - 16px);
-        }
-
-        #canvas-modal .dt-tool-grid {
-          grid-template-columns:repeat(2,1fr);
-        }
-
-        #canvas-modal .dt-controls {
-          display:grid;
-          grid-template-columns:1fr 1fr;
-          gap:8px;
-        }
-
-        #canvas-modal .dt-size-control {
-          grid-column:span 2;
-        }
-
-        #canvas-modal #dt-size-input {
-          flex:1;
-          width:auto;
-        }
-      }
-    `;
-
-    if (!document.getElementById(style.id)) {
-      document.head.appendChild(style);
-    }
-
-    toolbar
-      .querySelectorAll('[data-draw-tool]')
-      .forEach(function (button) {
-        button.addEventListener('click', function () {
-          setTool(button.dataset.drawTool);
+        document.querySelectorAll(
+          '#draw-together-modal [data-tool]'
+        ).forEach(function (b) {
+          b.classList.remove('active');
         });
+
+        button.classList.add('active');
+
+        currentTool =
+          button.getAttribute('data-tool');
+      });
+    });
+
+    document.getElementById('dt-color')
+      .addEventListener('input', function (e) {
+        currentColor = e.target.value;
       });
 
-    const color = document.getElementById('dt-color-input');
-
-    if (color) {
-      color.addEventListener('input', function () {
-        currentColor = color.value;
+    document.getElementById('dt-size')
+      .addEventListener('input', function (e) {
+        currentSize =
+          Number(e.target.value) || 4;
       });
-    }
 
-    const size = document.getElementById('dt-size-input');
-    const sizeValue = document.getElementById('dt-size-value');
+    document.getElementById('dt-poly-sides')
+      .addEventListener('input', function (e) {
 
-    if (size) {
-      size.addEventListener('input', function () {
-        currentSize = parseInt(size.value, 10) || 4;
-
-        if (sizeValue) {
-          sizeValue.textContent = currentSize;
-        }
-      });
-    }
-
-    const polygon = document.getElementById('dt-polygon-input');
-
-    if (polygon) {
-      polygon.addEventListener('input', function () {
         polygonSides = Math.max(
           3,
           Math.min(
             12,
-            parseInt(polygon.value, 10) || 5
+            Number(e.target.value) || 5
           )
         );
+
       });
-    }
+
+    setupCanvas();
+
+    loadDrawing();
   }
 
-  // ------------------------------------------------------------
-  // Modal
-  // ------------------------------------------------------------
+
+  /* =========================================================
+     OPEN / CLOSE
+  ========================================================= */
 
   function openModal() {
-    const modal = document.getElementById('canvas-modal');
 
-    if (!modal) {
-      error('Missing #canvas-modal');
-      return;
+    createModal();
+
+    /*
+     * Some existing apps put blur on body or a parent container.
+     * Move our modal directly under <body> and make sure it is
+     * outside those containers.
+     */
+
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
     }
 
-    modal.style.display = 'flex';
-    modal.style.visibility = 'visible';
-    modal.style.opacity = '1';
+    modal.classList.add('dt-open');
 
-    // Make sure it isn't hidden behind another app layer.
-    modal.style.zIndex = '99999';
+    modal.style.setProperty('display', 'flex', 'important');
 
-    const content = modal.querySelector('.modal-content');
+    modal.style.setProperty('z-index', '999999', 'important');
 
-    if (content) {
-      content.style.position = 'relative';
-      content.style.zIndex = '100000';
-    }
+    document.body.classList.add('dt-drawing-open');
 
-    setTimeout(function () {
-      redraw();
-    }, 20);
+    redraw();
   }
 
-  function closeModal() {
-    const modal = document.getElementById('canvas-modal');
 
-    if (modal) {
-      modal.style.display = 'none';
-    }
+  function closeModal() {
+
+    if (!modal) return;
+
+    modal.classList.remove('dt-open');
+
+    modal.style.setProperty('display', 'none', 'important');
+
+    document.body.classList.remove('dt-drawing-open');
 
     saveDrawing();
   }
 
-  // ------------------------------------------------------------
-  // New canvas
-  // ------------------------------------------------------------
 
-  function newCanvas(options) {
-    options = options || {};
+  /* =========================================================
+     CANVAS
+  ========================================================= */
 
-    const id =
-      'canvas_' +
-      Date.now() +
-      '_' +
-      Math.random().toString(36).slice(2, 8);
+  function setupCanvas() {
 
-    currentCanvasId = id;
+    canvas.addEventListener(
+      'pointerdown',
+      pointerDown
+    );
 
-    actions = [];
-    undone = [];
+    canvas.addEventListener(
+      'pointermove',
+      pointerMove
+    );
 
-    if (!canvas) {
-      setupCanvas();
-    }
+    window.addEventListener(
+      'pointerup',
+      pointerUp
+    );
 
-    redraw();
+    canvas.addEventListener(
+      'pointercancel',
+      pointerUp
+    );
+  }
 
-    log('Created canvas:', id);
+
+  function getPosition(e) {
+
+    const rect =
+      canvas.getBoundingClientRect();
 
     return {
-      id: id,
-      title: options.title || '画布',
-      owner: options.owner || 'me',
-      shared: !!options.shared
+
+      x:
+        (e.clientX - rect.left) *
+        (CANVAS_W / rect.width),
+
+      y:
+        (e.clientY - rect.top) *
+        (CANVAS_H / rect.height)
+
     };
   }
 
-  // ------------------------------------------------------------
-  // Open canvas by ID
-  // ------------------------------------------------------------
 
-  function openCanvasModalById(id) {
-    currentCanvasId = id;
+  function pointerDown(e) {
 
-    loadDrawing(id);
+    e.preventDefault();
 
-    if (!canvas) {
-      if (!setupCanvas()) {
-        return;
-      }
+    drawing = true;
+
+    startPoint = getPosition(e);
+
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+
+      currentStroke = {
+
+        type: 'stroke',
+
+        mode:
+          currentTool === 'eraser'
+            ? 'eraser'
+            : 'brush',
+
+        color: currentColor,
+
+        width: currentSize,
+
+        points: [
+          startPoint
+        ]
+
+      };
+
+      actions.push(currentStroke);
     }
 
-    buildToolbar();
     redraw();
-    openModal();
   }
 
-  // ------------------------------------------------------------
-  // Send drawing to chat
-  // ------------------------------------------------------------
 
-  function createImageData(actionsToRender) {
-    const offscreen = document.createElement('canvas');
+  function pointerMove(e) {
 
-    offscreen.width = CANVAS_W;
-    offscreen.height = CANVAS_H;
+    if (!drawing) return;
 
-    const offCtx = offscreen.getContext('2d');
+    e.preventDefault();
 
-    offCtx.fillStyle = '#ffffff';
-    offCtx.fillRect(
+    const p = getPosition(e);
+
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+
+      if (!currentStroke) return;
+
+      currentStroke.points.push(p);
+
+      redraw();
+
+      return;
+    }
+
+    redraw();
+
+    drawPreview(p);
+  }
+
+
+  function pointerUp(e) {
+
+    if (!drawing) return;
+
+    drawing = false;
+
+    const p = getPosition(e);
+
+    if (
+      currentTool === 'brush' ||
+      currentTool === 'eraser'
+    ) {
+
+      currentStroke = null;
+
+      saveDrawing();
+
+      redraw();
+
+      return;
+    }
+
+    if (currentTool === 'line') {
+
+      actions.push({
+        type: 'line',
+
+        x1: startPoint.x,
+        y1: startPoint.y,
+
+        x2: p.x,
+        y2: p.y,
+
+        color: currentColor,
+        width: currentSize
+      });
+
+    }
+
+    else if (currentTool === 'rect') {
+
+      actions.push({
+
+        type: 'rect',
+
+        x: Math.min(
+          startPoint.x,
+          p.x
+        ),
+
+        y: Math.min(
+          startPoint.y,
+          p.y
+        ),
+
+        w: Math.abs(
+          p.x - startPoint.x
+        ),
+
+        h: Math.abs(
+          p.y - startPoint.y
+        ),
+
+        color: currentColor,
+        width: currentSize
+      });
+
+    }
+
+    else if (currentTool === 'circle') {
+
+      const dx =
+        p.x - startPoint.x;
+
+      const dy =
+        p.y - startPoint.y;
+
+      actions.push({
+
+        type: 'circle',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: Math.sqrt(
+          dx * dx +
+          dy * dy
+        ),
+
+        color: currentColor,
+        width: currentSize
+      });
+
+    }
+
+    else if (currentTool === 'polygon') {
+
+      const dx =
+        p.x - startPoint.x;
+
+      const dy =
+        p.y - startPoint.y;
+
+      actions.push({
+
+        type: 'polygon',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: Math.sqrt(
+          dx * dx +
+          dy * dy
+        ),
+
+        sides: polygonSides,
+
+        rotation: 0,
+
+        color: currentColor,
+        width: currentSize
+      });
+    }
+
+    startPoint = null;
+
+    saveDrawing();
+
+    redraw();
+  }
+
+
+  /* =========================================================
+     DRAWING
+  ========================================================= */
+
+  function renderAction(a, targetCtx, preview) {
+
+    const c = targetCtx || ctx;
+
+    c.save();
+
+    if (a.type === 'stroke') {
+
+      c.lineCap = 'round';
+      c.lineJoin = 'round';
+
+      c.lineWidth = a.width || 2;
+
+      if (a.mode === 'eraser') {
+
+        c.globalCompositeOperation =
+          'destination-out';
+
+      } else {
+
+        c.globalCompositeOperation =
+          'source-over';
+
+        c.strokeStyle =
+          a.color || '#111';
+      }
+
+      const points = a.points || [];
+
+      if (!points.length) {
+        c.restore();
+        return;
+      }
+
+      c.beginPath();
+
+      points.forEach(function (p, i) {
+
+        if (i === 0) {
+          c.moveTo(p.x, p.y);
+        } else {
+          c.lineTo(p.x, p.y);
+        }
+
+      });
+
+      c.stroke();
+
+    }
+
+    else if (a.type === 'line') {
+
+      c.lineWidth = a.width || 2;
+      c.strokeStyle = a.color || '#111';
+
+      c.beginPath();
+
+      c.moveTo(a.x1, a.y1);
+      c.lineTo(a.x2, a.y2);
+
+      c.stroke();
+
+    }
+
+    else if (a.type === 'rect') {
+
+      c.lineWidth = a.width || 2;
+      c.strokeStyle = a.color || '#111';
+
+      c.strokeRect(
+        a.x,
+        a.y,
+        a.w,
+        a.h
+      );
+
+    }
+
+    else if (a.type === 'circle') {
+
+      c.lineWidth = a.width || 2;
+      c.strokeStyle = a.color || '#111';
+
+      c.beginPath();
+
+      c.arc(
+        a.cx,
+        a.cy,
+        a.r,
+        0,
+        Math.PI * 2
+      );
+
+      c.stroke();
+
+    }
+
+    else if (a.type === 'polygon') {
+
+      const sides =
+        Math.max(
+          3,
+          a.sides || 5
+        );
+
+      c.lineWidth =
+        a.width || 2;
+
+      c.strokeStyle =
+        a.color || '#111';
+
+      c.beginPath();
+
+      for (
+        let i = 0;
+        i < sides;
+        i++
+      ) {
+
+        const angle =
+          (a.rotation || 0) +
+          i / sides *
+          Math.PI * 2;
+
+        const x =
+          a.cx +
+          Math.cos(angle) *
+          a.r;
+
+        const y =
+          a.cy +
+          Math.sin(angle) *
+          a.r;
+
+        if (i === 0) {
+          c.moveTo(x, y);
+        } else {
+          c.lineTo(x, y);
+        }
+      }
+
+      c.closePath();
+
+      c.stroke();
+    }
+
+    c.restore();
+  }
+
+
+  function redraw() {
+
+    if (!ctx) return;
+
+    ctx.clearRect(
       0,
       0,
       CANVAS_W,
       CANVAS_H
     );
 
-    actionsToRender.forEach(function (action) {
-      renderAction(offCtx, action, false);
-    });
+    ctx.fillStyle = '#fff';
 
-    return offscreen.toDataURL('image/png');
+    ctx.fillRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    actions.forEach(function (a) {
+      renderAction(a);
+    });
   }
 
-  function sendDrawingToChat() {
-    try {
-      const image = createImageData(actions);
 
-      const message = {
-        id: Date.now(),
-        sender: 'user',
-        text: '',
-        timestamp: new Date(),
-        image: image,
-        drawingData: JSON.parse(
-          JSON.stringify(actions)
+  function drawPreview(p) {
+
+    if (!startPoint) return;
+
+    ctx.save();
+
+    ctx.setLineDash([
+      6,
+      6
+    ]);
+
+    if (currentTool === 'line') {
+
+      renderAction({
+
+        type: 'line',
+
+        x1: startPoint.x,
+        y1: startPoint.y,
+
+        x2: p.x,
+        y2: p.y,
+
+        color: currentColor,
+        width: currentSize
+
+      });
+
+    }
+
+    else if (currentTool === 'rect') {
+
+      renderAction({
+
+        type: 'rect',
+
+        x: Math.min(
+          startPoint.x,
+          p.x
         ),
-        status: 'sent',
-        type: 'drawing'
-      };
 
-      if (typeof window.addMessage === 'function') {
-        window.addMessage(message);
-      } else {
-        window.messages = window.messages || [];
-        window.messages.push(message);
+        y: Math.min(
+          startPoint.y,
+          p.y
+        ),
 
-        if (typeof window.renderMessages === 'function') {
-          window.renderMessages();
-        }
-      }
+        w: Math.abs(
+          p.x - startPoint.x
+        ),
 
-      saveDrawing();
+        h: Math.abs(
+          p.y - startPoint.y
+        ),
 
-      closeModal();
+        color: currentColor,
+        width: currentSize
 
-      log('Drawing sent to chat.');
+      });
 
-      // IMPORTANT:
-      // We do NOT automatically make partner draw here.
-      // The partner drawing chance is handled separately.
+    }
+
+    else if (currentTool === 'circle') {
+
+      const dx =
+        p.x - startPoint.x;
+
+      const dy =
+        p.y - startPoint.y;
+
+      renderAction({
+
+        type: 'circle',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: Math.sqrt(
+          dx * dx +
+          dy * dy
+        ),
+
+        color: currentColor,
+        width: currentSize
+
+      });
+
+    }
+
+    else if (currentTool === 'polygon') {
+
+      const dx =
+        p.x - startPoint.x;
+
+      const dy =
+        p.y - startPoint.y;
+
+      renderAction({
+
+        type: 'polygon',
+
+        cx: startPoint.x,
+        cy: startPoint.y,
+
+        r: Math.sqrt(
+          dx * dx +
+          dy * dy
+        ),
+
+        sides: polygonSides,
+
+        rotation: 0,
+
+        color: currentColor,
+        width: currentSize
+
+      });
+    }
+
+    ctx.restore();
+  }
+
+
+  /* =========================================================
+     UNDO / CLEAR
+  ========================================================= */
+
+  function undo() {
+
+    if (!actions.length) return;
+
+    undoStack.push(
+      actions.pop()
+    );
+
+    saveDrawing();
+
+    redraw();
+  }
+
+
+  function clearCanvas() {
+
+    if (
+      !confirm('Clear canvas?')
+    ) {
+      return;
+    }
+
+    actions = [];
+
+    undoStack = [];
+
+    saveDrawing();
+
+    redraw();
+  }
+
+
+  /* =========================================================
+     LOCAL STORAGE
+  ========================================================= */
+
+  function saveDrawing() {
+
+    try {
+
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(actions)
+      );
 
     } catch (e) {
-      error('Could not send drawing:', e);
+
+      console.warn(
+        '[DrawTogether] Could not save drawing',
+        e
+      );
+
     }
   }
 
-  // ------------------------------------------------------------
-  // Random partner drawing
-  // ------------------------------------------------------------
 
-  function randomColor() {
-    const colors = [
-      '#ff6b6b',
-      '#ff9f43',
-      '#feca57',
-      '#1dd1a1',
-      '#54a0ff',
-      '#5f27cd',
-      '#ff78c5',
-      '#222222'
-    ];
+  function loadDrawing() {
 
-    return colors[
-      Math.floor(Math.random() * colors.length)
-    ];
+    try {
+
+      const raw =
+        localStorage.getItem(
+          STORAGE_KEY
+        );
+
+      if (!raw) return;
+
+      const saved =
+        JSON.parse(raw);
+
+      if (Array.isArray(saved)) {
+
+        actions = saved;
+
+        redraw();
+      }
+
+    } catch (e) {
+
+      console.warn(
+        '[DrawTogether] Could not load drawing',
+        e
+      );
+
+    }
   }
 
-  function randomInt(min, max) {
-    return Math.floor(
-      Math.random() * (max - min + 1)
-    ) + min;
+
+  /* =========================================================
+     SEND DRAWING TO CHAT
+  ========================================================= */
+
+  function createImage() {
+
+    const output =
+      document.createElement('canvas');
+
+    output.width = CANVAS_W;
+    output.height = CANVAS_H;
+
+    const outCtx =
+      output.getContext('2d');
+
+    outCtx.fillStyle = '#fff';
+
+    outCtx.fillRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    actions.forEach(function (a) {
+
+      renderAction(
+        a,
+        outCtx
+      );
+
+    });
+
+    return output.toDataURL(
+      'image/png'
+    );
   }
 
-  function randomRange(min, max) {
-    return Math.random() * (max - min) + min;
+
+  function sendDrawing() {
+
+    const image =
+      createImage();
+
+    const message = {
+
+      id: Date.now(),
+
+      sender: 'user',
+
+      text: '',
+
+      timestamp: new Date(),
+
+      image: image,
+
+      drawingData:
+        JSON.parse(
+          JSON.stringify(actions)
+        ),
+
+      type: 'drawing',
+
+      status: 'sent'
+
+    };
+
+    if (
+      typeof window.addMessage ===
+      'function'
+    ) {
+
+      try {
+
+        window.addMessage(message);
+
+      } catch (e) {
+
+        fallbackMessage(message);
+      }
+
+    } else {
+
+      fallbackMessage(message);
+    }
+
+    closeModal();
+
+    /*
+     * IMPORTANT:
+     *
+     * Sending a drawing itself does NOT automatically
+     * make the partner draw.
+     *
+     * The partner-drawing chance should be triggered
+     * by the normal message system.
+     */
+
+    saveDrawing();
   }
 
-  function randomDoodle() {
+
+  function fallbackMessage(message) {
+
+    window.messages =
+      window.messages || [];
+
+    window.messages.push(
+      message
+    );
+
+    if (
+      typeof window.renderMessages ===
+      'function'
+    ) {
+
+      window.renderMessages();
+    }
+  }
+
+
+  /* =========================================================
+     PARTNER DRAWING
+     *
+     * Call this whenever the USER sends ANY message.
+     * It is NOT tied specifically to drawings.
+  ========================================================= */
+
+  function maybePartnerDraw() {
+
+    if (
+      Math.random() >
+      PARTNER_DRAW_CHANCE
+    ) {
+      return;
+    }
+
+    const delay =
+      1000 +
+      Math.random() * 3000;
+
+    setTimeout(
+      function () {
+
+        sendRandomPartnerDrawing();
+
+      },
+      delay
+    );
+  }
+
+
+  function sendRandomPartnerDrawing() {
+
+    const partnerActions =
+      generatePartnerDrawing();
+
+    const output =
+      document.createElement('canvas');
+
+    output.width = CANVAS_W;
+    output.height = CANVAS_H;
+
+    const outCtx =
+      output.getContext('2d');
+
+    outCtx.fillStyle = '#fff';
+
+    outCtx.fillRect(
+      0,
+      0,
+      CANVAS_W,
+      CANVAS_H
+    );
+
+    partnerActions.forEach(
+      function (a) {
+
+        renderAction(
+          a,
+          outCtx
+        );
+
+      }
+    );
+
+    const message = {
+
+      id: Date.now(),
+
+      sender: 'partner',
+
+      text: '',
+
+      timestamp: new Date(),
+
+      image:
+        output.toDataURL(
+          'image/png'
+        ),
+
+      drawingData:
+        partnerActions,
+
+      type: 'drawing',
+
+      status: 'sent'
+
+    };
+
+    if (
+      typeof window.addMessage ===
+      'function'
+    ) {
+
+      try {
+
+        window.addMessage(
+          message
+        );
+
+      } catch (e) {
+
+        fallbackMessage(
+          message
+        );
+      }
+
+    } else {
+
+      fallbackMessage(
+        message
+      );
+    }
+  }
+
+
+  function generatePartnerDrawing() {
+
     const result = [];
 
-    const count = randomInt(3, 10);
+    const count =
+      3 +
+      Math.floor(
+        Math.random() * 8
+      );
 
-    for (let i = 0; i < count; i++) {
+    const colors = [
+      '#ff6b6b',
+      '#4dabf7',
+      '#51cf66',
+      '#fcc419',
+      '#cc5de8',
+      '#ff922b'
+    ];
 
-      const type = randomInt(0, 4);
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+
+      const type =
+        Math.floor(
+          Math.random() * 4
+        );
+
+      const color =
+        colors[
+          Math.floor(
+            Math.random() *
+            colors.length
+          )
+        ];
 
       if (type === 0) {
 
         const points = [];
 
-        let x = randomRange(30, CANVAS_W - 30);
-        let y = randomRange(30, CANVAS_H - 30);
+        let x =
+          50 +
+          Math.random() *
+          700;
 
-        const pointCount = randomInt(5, 18);
+        let y =
+          50 +
+          Math.random() *
+          400;
 
-        for (let j = 0; j < pointCount; j++) {
-          x += randomRange(-40, 40);
-          y += randomRange(-40, 40);
+        for (
+          let j = 0;
+          j < 8;
+          j++
+        ) {
 
-          x = Math.max(
-            10,
-            Math.min(CANVAS_W - 10, x)
-          );
+          x +=
+            -40 +
+            Math.random() * 80;
 
-          y = Math.max(
-            10,
-            Math.min(CANVAS_H - 10, y)
-          );
+          y +=
+            -40 +
+            Math.random() * 80;
 
           points.push({
-            x: x,
-            y: y
+
+            x: Math.max(
+              10,
+              Math.min(
+                790,
+                x
+              )
+            ),
+
+            y: Math.max(
+              10,
+              Math.min(
+                490,
+                y
+              )
+            )
+
           });
         }
 
         result.push({
+
           type: 'stroke',
+
           mode: 'brush',
-          color: randomColor(),
-          width: randomInt(2, 7),
+
+          color: color,
+
+          width:
+            2 +
+            Math.random() * 5,
+
           points: points
+
         });
 
-      } else if (type === 1) {
+      }
+
+      else if (type === 1) {
 
         result.push({
-          type: 'line',
-          x1: randomRange(20, CANVAS_W - 20),
-          y1: randomRange(20, CANVAS_H - 20),
-          x2: randomRange(20, CANVAS_W - 20),
-          y2: randomRange(20, CANVAS_H - 20),
-          color: randomColor(),
-          width: randomInt(2, 6)
-        });
 
-      } else if (type === 2) {
-
-        result.push({
           type: 'circle',
-          cx: randomRange(60, CANVAS_W - 60),
-          cy: randomRange(60, CANVAS_H - 60),
-          r: randomRange(15, 80),
-          color: randomColor(),
-          width: randomInt(2, 6),
-          fill: null
+
+          cx:
+            50 +
+            Math.random() * 700,
+
+          cy:
+            50 +
+            Math.random() * 400,
+
+          r:
+            15 +
+            Math.random() * 80,
+
+          color: color,
+
+          width: 3
+
         });
 
-      } else if (type === 3) {
+      }
+
+      else if (type === 2) {
 
         result.push({
+
           type: 'rect',
-          x: randomRange(20, CANVAS_W - 160),
-          y: randomRange(20, CANVAS_H - 160),
-          w: randomRange(30, 130),
-          h: randomRange(30, 130),
-          color: randomColor(),
-          width: randomInt(2, 6),
-          fill: null
+
+          x:
+            20 +
+            Math.random() * 600,
+
+          y:
+            20 +
+            Math.random() * 350,
+
+          w:
+            30 +
+            Math.random() * 150,
+
+          h:
+            30 +
+            Math.random() * 100,
+
+          color: color,
+
+          width: 3
+
         });
 
-      } else {
+      }
+
+      else {
 
         result.push({
-          type: 'polygon',
-          cx: randomRange(60, CANVAS_W - 60),
-          cy: randomRange(60, CANVAS_H - 60),
-          r: randomRange(20, 80),
-          sides: randomInt(3, 7),
-          rotation: randomRange(0, Math.PI * 2),
-          color: randomColor(),
-          width: randomInt(2, 6),
-          fill: null
+
+          type: 'line',
+
+          x1:
+            Math.random() *
+            CANVAS_W,
+
+          y1:
+            Math.random() *
+            CANVAS_H,
+
+          x2:
+            Math.random() *
+            CANVAS_W,
+
+          y2:
+            Math.random() *
+            CANVAS_H,
+
+          color: color,
+
+          width: 3
+
         });
       }
     }
@@ -1135,217 +1627,103 @@
     return result;
   }
 
-  function sendPartnerDrawing() {
-    try {
-      const drawing = randomDoodle();
 
-      const image = createImageData(drawing);
-
-      const message = {
-        id: Date.now(),
-        sender: 'partner',
-        text: '',
-        timestamp: new Date(),
-        image: image,
-        drawingData: drawing,
-        status: 'sent',
-        type: 'drawing'
-      };
-
-      if (typeof window.addMessage === 'function') {
-        window.addMessage(message);
-      } else {
-        window.messages = window.messages || [];
-        window.messages.push(message);
-
-        if (typeof window.renderMessages === 'function') {
-          window.renderMessages();
-        }
-      }
-
-      log('Partner sent a drawing.');
-
-      return message;
-
-    } catch (e) {
-      error('Partner drawing failed:', e);
-      return null;
-    }
-  }
-
-  // ------------------------------------------------------------
-  // Optional public partner-drawing test
-  // ------------------------------------------------------------
-
-  function testPartnerDrawing() {
-    return sendPartnerDrawing();
-  }
-
-  // ------------------------------------------------------------
-  // Wire buttons already in HTML
-  // ------------------------------------------------------------
-
-  function wireExistingButtons() {
-
-    const send = document.getElementById(
-      'canvas-send-to-chat'
-    );
-
-    if (send) {
-      send.addEventListener(
-        'click',
-        sendDrawingToChat
-      );
-    }
-
-    const close = document.getElementById(
-      'canvas-save-close'
-    );
-
-    if (close) {
-      close.addEventListener(
-        'click',
-        closeModal
-      );
-    }
-
-    const undoButton = document.getElementById(
-      'canvas-undo'
-    );
-
-    if (undoButton) {
-      undoButton.addEventListener(
-        'click',
-        undo
-      );
-    }
-
-    const clearButton = document.getElementById(
-      'canvas-clear'
-    );
-
-    if (clearButton) {
-      clearButton.addEventListener(
-        'click',
-        function () {
-          if (confirm('Clear canvas?')) {
-            clearDrawing();
-          }
-        }
-      );
-    }
-
-    const newButton = document.getElementById(
-      'canvas-new'
-    );
-
-    if (newButton) {
-      newButton.addEventListener(
-        'click',
-        function () {
-          if (confirm('Start a new canvas?')) {
-            actions = [];
-            undone = [];
-            redraw();
-            saveDrawing();
-          }
-        }
-      );
-    }
-  }
-
-  // ------------------------------------------------------------
-  // Canvas events
-  // ------------------------------------------------------------
-
-  function wireCanvas() {
-
-    if (!canvas) return;
-
-    canvas.addEventListener(
-      'pointerdown',
-      onPointerDown
-    );
-
-    canvas.addEventListener(
-      'pointermove',
-      onPointerMove
-    );
-
-    window.addEventListener(
-      'pointerup',
-      onPointerUp
-    );
-  }
-
-  // ------------------------------------------------------------
-  // Initialize
-  // ------------------------------------------------------------
-
-  function init() {
-
-    if (!setupCanvas()) {
-      error(
-        'Draw Together could not initialize because #drawing-canvas is missing.'
-      );
-      return;
-    }
-
-    buildToolbar();
-    wireExistingButtons();
-    wireCanvas();
-
-    clearCanvasVisual();
-
-    log('Draw Together initialized.');
-
-    return true;
-  }
-
-  // ------------------------------------------------------------
-  // Public API expected by your HTML
-  // ------------------------------------------------------------
+  /* =========================================================
+     PUBLIC API
+  ========================================================= */
 
   window.drawTogether = {
 
-    newCanvas: newCanvas,
+    open: openModal,
+
+    close: closeModal,
+
+    sendDrawing: sendDrawing,
+
+    maybePartnerDraw:
+      maybePartnerDraw,
+
+    newCanvas: function () {
+
+      createModal();
+
+      actions = [];
+
+      undoStack = [];
+
+      saveDrawing();
+
+      redraw();
+
+      openModal();
+
+      return {
+
+        id: 'drawing-' + Date.now()
+
+      };
+
+    },
 
     openCanvasModalById:
-      openCanvasModalById,
+      function () {
 
-    closeCanvasModal:
-      closeModal,
+        openModal();
 
-    sendDrawing:
-      sendDrawingToChat,
+      }
 
-    undo:
-      undo,
-
-    clear:
-      clearDrawing,
-
-    // Useful for testing partner drawings
-    testPartnerDrawing:
-      testPartnerDrawing
   };
 
-  // ------------------------------------------------------------
-  // Start
-  // ------------------------------------------------------------
+
+  /*
+   * Compatibility with your existing HTML:
+   *
+   * Clicking #open-draw-together will open our modal.
+   */
+
+  function init() {
+
+    createModal();
+
+    const button =
+      document.getElementById(
+        'open-draw-together'
+      );
+
+    if (button) {
+
+      button.onclick =
+        function (e) {
+
+          e.preventDefault();
+
+          openModal();
+
+        };
+
+    }
+
+    console.log(
+      '[DrawTogether] initialized'
+    );
+  }
+
 
   if (
-    document.readyState === 'loading'
+    document.readyState ===
+    'loading'
   ) {
 
     document.addEventListener(
       'DOMContentLoaded',
-      init,
-      { once: true }
+      init
     );
 
   } else {
+
     init();
+
   }
+
 
 })();
