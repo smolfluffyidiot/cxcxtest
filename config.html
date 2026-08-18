@@ -2040,7 +2040,7 @@
     <!-- Draw Together Modal -->
     <div
       class="modal"
-      id="draw-together-modal"
+      id="canvas-modal"
       style="display:none; z-index:2200;"
     >
       <div
@@ -2426,7 +2426,7 @@
     
     <!-- Mobile layout -->
     <style>
-      #draw-together-modal #draw-toolbar .draw-tool {
+      #canvas-modal #draw-toolbar .draw-tool {
         min-height: 42px;
         display: flex;
         align-items: center;
@@ -2435,42 +2435,42 @@
         padding: 5px;
       }
     
-      #draw-together-modal #draw-toolbar .draw-tool span {
+      #canvas-modal #draw-toolbar .draw-tool span {
         font-size: 12px;
       }
     
       @media (max-width: 600px) {
     
-        #draw-together-modal .modal-content {
+        #canvas-modal .modal-content {
           width: calc(100% - 10px) !important;
           max-height: calc(100vh - 10px) !important;
         }
     
-        #draw-together-modal .modal-content > div {
+        #canvas-modal .modal-content > div {
           max-height: calc(100vh - 10px);
           border-radius: 10px !important;
         }
     
-        #draw-together-modal #draw-toolbar {
+        #canvas-modal #draw-toolbar {
           padding: 8px;
         }
     
-        #draw-together-modal #draw-toolbar .draw-tool {
+        #canvas-modal #draw-toolbar .draw-tool {
           min-height: 44px;
           flex-direction:column;
           gap:2px;
         }
     
-        #draw-together-modal #draw-toolbar .draw-tool span {
+        #canvas-modal #draw-toolbar .draw-tool span {
           font-size:10px;
         }
     
-        #draw-together-modal #draw-send {
+        #canvas-modal #draw-send {
           padding:7px 9px;
           font-size:12px;
         }
     
-        #draw-together-modal #draw-close {
+        #canvas-modal #draw-close {
           padding:7px 9px;
           font-size:12px;
         }
@@ -2478,15 +2478,15 @@
     
       @media (max-width: 400px) {
     
-        #draw-together-modal #draw-toolbar .draw-tool {
+        #canvas-modal #draw-toolbar .draw-tool {
           min-height:40px;
         }
     
-        #draw-together-modal #draw-toolbar .draw-tool span {
+        #canvas-modal #draw-toolbar .draw-tool span {
           display:none;
         }
     
-        #draw-together-modal #draw-toolbar .draw-tool {
+        #canvas-modal #draw-toolbar .draw-tool {
           font-size:18px;
         }
     
