@@ -1318,7 +1318,7 @@
                     class="dt-tool"
                     data-tool="brush"
                 >
-                    🖌 Brush
+                    🖌 画笔
                 </button>
 
                 <button
@@ -1326,7 +1326,7 @@
                     class="dt-tool"
                     data-tool="eraser"
                 >
-                    🧽 Eraser
+                    🧽 橡皮擦
                 </button>
 
                 <button
@@ -1334,7 +1334,7 @@
                     class="dt-tool"
                     data-tool="line"
                 >
-                    ╱ Line
+                    ╱ 直线
                 </button>
 
                 <button
@@ -1342,7 +1342,7 @@
                     class="dt-tool"
                     data-tool="rect"
                 >
-                    □ Rect
+                    □ 方形
                 </button>
 
                 <button
@@ -1350,7 +1350,7 @@
                     class="dt-tool"
                     data-tool="circle"
                 >
-                    ○ Circle
+                    ○ 圆形
                 </button>
 
                 <button
@@ -1358,7 +1358,7 @@
                     class="dt-tool"
                     data-tool="polygon"
                 >
-                    ⬡ Polygon
+                    ⬡ 多边形
                 </button>
 
             </div>
@@ -1379,7 +1379,7 @@
                         gap:5px;
                     "
                 >
-                    Color
+                    颜色
 
                     <input
                         id="dt-color"
@@ -1394,7 +1394,7 @@
                         min-width:120px;
                     "
                 >
-                    Size
+                    大小
 
                     <input
                         id="dt-size"
@@ -1418,7 +1418,7 @@
             >
 
                 <label>
-                    Polygon sides
+                    边数
                 </label>
 
                 <input
