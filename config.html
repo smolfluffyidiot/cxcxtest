@@ -2136,7 +2136,7 @@
                 "
               >
                 <canvas
-                  id="draw-canvas"
+                  id="drawing-canvas"
                   width="800"
                   height="500"
                   style="
@@ -2155,7 +2155,7 @@
     
             <!-- TOOLBOX -->
             <div
-              id="draw-toolbar"
+              id="canvas-toolbar"
               style="
                 width:100%;
                 box-sizing:border-box;
@@ -2426,7 +2426,7 @@
     
     <!-- Mobile layout -->
     <style>
-      #canvas-modal #draw-toolbar .draw-tool {
+      #canvas-modal #canvas-toolbar .draw-tool {
         min-height: 42px;
         display: flex;
         align-items: center;
@@ -2435,7 +2435,7 @@
         padding: 5px;
       }
     
-      #canvas-modal #draw-toolbar .draw-tool span {
+      #canvas-modal #canvas-toolbar .draw-tool span {
         font-size: 12px;
       }
     
@@ -2451,17 +2451,17 @@
           border-radius: 10px !important;
         }
     
-        #canvas-modal #draw-toolbar {
+        #canvas-modal #canvas-toolbar {
           padding: 8px;
         }
     
-        #canvas-modal #draw-toolbar .draw-tool {
+        #canvas-modal #canvas-toolbar .draw-tool {
           min-height: 44px;
           flex-direction:column;
           gap:2px;
         }
     
-        #canvas-modal #draw-toolbar .draw-tool span {
+        #canvas-modal #canvas-toolbar .draw-tool span {
           font-size:10px;
         }
     
@@ -2478,15 +2478,15 @@
     
       @media (max-width: 400px) {
     
-        #canvas-modal #draw-toolbar .draw-tool {
+        #canvas-modal #canvas-toolbar .draw-tool {
           min-height:40px;
         }
     
-        #canvas-modal #draw-toolbar .draw-tool span {
+        #canvas-modal #canvas-toolbar .draw-tool span {
           display:none;
         }
     
-        #canvas-modal #draw-toolbar .draw-tool {
+        #canvas-modal #canvas-toolbar .draw-tool {
           font-size:18px;
         }
     
