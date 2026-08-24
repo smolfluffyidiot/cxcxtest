@@ -1995,19 +1995,19 @@
             );
 
             // Direct check - addMessage should ALWAYS be available by this point
-            if (
-                typeof window.addMessage ===
-                'function'
-            ) {
-
+            // Try multiple ways to access addMessage
+            const addMessageFunc = 
+                (typeof window.addMessage === 'function') ? window.addMessage :
+                (typeof addMessage === 'function') ? addMessage :
+                null;
+            
+            if (addMessageFunc) {
+            
                 console.log(
-                    '[DrawTogether] ✓ addMessage is available. Sending partner drawing...'
+                    '[DrawTogether] Adding partner drawing to chat'
                 );
-
-                window.addMessage(
-                    message
-                );
-
+            
+                addMessageFunc(message);
                 console.log(
                     '[DrawTogether] ✓ Partner drawing sent!'
                 );
