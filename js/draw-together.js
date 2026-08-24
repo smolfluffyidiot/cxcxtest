@@ -1990,28 +1990,35 @@
             };
 
             console.log(
-                '[DrawTogether] Partner drawing:',
+                '[DrawTogether] Partner drawing message created:',
                 message
             );
 
+            // Direct check - addMessage should ALWAYS be available by this point
             if (
                 typeof window.addMessage ===
                 'function'
             ) {
 
                 console.log(
-                    '[DrawTogether] Adding partner drawing to chat'
+                    '[DrawTogether] ✓ addMessage is available. Sending partner drawing...'
                 );
 
                 window.addMessage(
                     message
                 );
 
+                console.log(
+                    '[DrawTogether] ✓ Partner drawing sent!'
+                );
+
             } else {
 
                 error(
-                    'window.addMessage is not available'
+                    '✗ window.addMessage is NOT available! Cannot send partner drawing.'
                 );
+
+                console.log('[DrawTogether] Available window functions:', Object.keys(window).filter(k => k.includes('add') || k.includes('Message')));
             }
 
         } catch (err) {
@@ -2020,6 +2027,7 @@
                 'Partner drawing failed:',
                 err
             );
+            console.error(err.stack);
         }
     }
 
@@ -2035,9 +2043,9 @@
             Math.random();
 
         log(
-            'Partner drawing roll:',
-            roll,
-            'chance:',
+            '🎲 Partner drawing roll:',
+            roll.toFixed(3),
+            '| Threshold:',
             PARTNER_DRAW_CHANCE
         );
 
@@ -2045,6 +2053,10 @@
             roll >
             PARTNER_DRAW_CHANCE
         ) {
+
+            log(
+                '❌ Roll failed. Partner will not draw this time.'
+            );
 
             return;
         }
@@ -2056,42 +2068,23 @@
             );
 
         log(
-            'Partner decided to draw. Delay:',
-            delay
+            '✅ Roll succeeded! Partner will draw in',
+            delay,
+            'ms'
         );
 
         setTimeout(
             function () {
+
+                log(
+                    '⏱️ Delay complete. Sending partner drawing now...'
+                );
 
                 sendPartnerDrawing();
 
             },
             delay
         );
-    }
-
-    // =====================================================
-    // HOOK INTO CHAT MESSAGE SENDING
-    // =====================================================
-
-    function setupMessageHook() {
-
-        // Store original addMessage if it exists
-        if (typeof window.addMessage === 'function' && !window.__originalAddMessage) {
-            window.__originalAddMessage = window.addMessage;
-
-            // Override addMessage to trigger partner drawing
-            window.addMessage = function(message) {
-                // Call the original addMessage
-                window.__originalAddMessage.call(this, message);
-
-                // If user sent a message, maybe partner draws
-                if (message.sender === 'user' && message.type === 'normal') {
-                    log('User message detected. Checking if partner should draw...');
-                    maybePartnerDraw();
-                }
-            };
-        }
     }
 
     // =====================================================
@@ -2165,9 +2158,6 @@
 
         setupToolbar();
 
-        // Hook into chat message sending
-        setupMessageHook();
-
         if (
             getElements()
         ) {
@@ -2189,11 +2179,8 @@
         initialize();
 
         log(
-            'Draw Together ready'
+            '✅ Draw Together ready!'
         );
-
-        // Also setup the hook on page load
-        setTimeout(setupMessageHook, 500);
     }
 
     if (
