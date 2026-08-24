@@ -1442,6 +1442,10 @@ if (!isBatchMode && type === 'normal') {
     // 触发延迟回复（真实用户消息 → isUserMessage = true）
     window._triggerDelayedReply(true);
 }
+// 触发伙伴绘画（如果 drawTogether 已加载）
+if (typeof window.drawTogether !== 'undefined' && typeof window.drawTogether.maybePartnerDraw === 'function') {
+    window.drawTogether.maybePartnerDraw();
+}
 };
 
             if (imageFile) {
