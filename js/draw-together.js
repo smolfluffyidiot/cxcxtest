@@ -35,7 +35,8 @@
      * Chance partner randomly sends a drawing after
      * a USER message.
      *
-     * 0.05 = 5%
+     * 1 = 100% (for testing)
+     * 0.05 = 5% (production)
      */
     const PARTNER_DRAW_CHANCE = 1;
 
@@ -1978,6 +1979,12 @@
                 status:
                     'received',
 
+                favorited:
+                    false,
+
+                note:
+                    null,
+
                 type:
                     'normal'
             };
@@ -2019,8 +2026,8 @@
     /*
      * Call this after a USER message is sent.
      *
-     * 100% chance for testing (set to 1).
-     * Change to 0.05 for 5% chance in production.
+     * 1 = 100% (for testing)
+     * 0.05 = 5% (production)
      */
     function maybePartnerDraw() {
 
@@ -2061,6 +2068,30 @@
             },
             delay
         );
+    }
+
+    // =====================================================
+    // HOOK INTO CHAT MESSAGE SENDING
+    // =====================================================
+
+    function setupMessageHook() {
+
+        // Store original addMessage if it exists
+        if (typeof window.addMessage === 'function' && !window.__originalAddMessage) {
+            window.__originalAddMessage = window.addMessage;
+
+            // Override addMessage to trigger partner drawing
+            window.addMessage = function(message) {
+                // Call the original addMessage
+                window.__originalAddMessage.call(this, message);
+
+                // If user sent a message, maybe partner draws
+                if (message.sender === 'user' && message.type === 'normal') {
+                    log('User message detected. Checking if partner should draw...');
+                    maybePartnerDraw();
+                }
+            };
+        }
     }
 
     // =====================================================
@@ -2134,6 +2165,9 @@
 
         setupToolbar();
 
+        // Hook into chat message sending
+        setupMessageHook();
+
         if (
             getElements()
         ) {
@@ -2157,6 +2191,9 @@
         log(
             'Draw Together ready'
         );
+
+        // Also setup the hook on page load
+        setTimeout(setupMessageHook, 500);
     }
 
     if (
