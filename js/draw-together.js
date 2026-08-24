@@ -1,23 +1,23 @@
 /* =========================================================
-   Draw Together
-   Uses the existing canvas modal in the HTML.
-
-   Expected HTML IDs:
-
-   #canvas-modal
-   #drawing-canvas
-   #canvas-toolbar
-   #canvas-send-to-chat
-   #canvas-save-close
-   #canvas-new
-   #canvas-undo
-   #canvas-clear
-
-   Existing chat function:
-
-   addMessage(message)
-
-   ========================================================= */
+    Draw Together
+    Uses the existing canvas modal in the HTML.
+ 
+    Expected HTML IDs:
+ 
+    #canvas-modal
+    #drawing-canvas
+    #canvas-toolbar
+    #canvas-send-to-chat
+    #canvas-save-close
+    #canvas-new
+    #canvas-undo
+    #canvas-clear
+ 
+    Existing chat function:
+ 
+    addMessage(message)
+ 
+    ========================================================= */
 
 (function () {
     'use strict';
@@ -1128,7 +1128,7 @@
                     'sent',
 
                 type:
-                    'drawing'
+                    'normal'
             };
 
             console.log(
@@ -1136,10 +1136,7 @@
                 message
             );
 
-            // ---------------------------------------------
-            // EXISTING CHAT SYSTEM
-            // ---------------------------------------------
-
+            // Make sure addMessage is accessible
             if (
                 typeof window.addMessage ===
                 'function'
@@ -1156,30 +1153,8 @@
             } else {
 
                 console.warn(
-                    '[DrawTogether] addMessage() does not exist. Using fallback.'
+                    '[DrawTogether] addMessage() does not exist.'
                 );
-
-                window.messages =
-                    window.messages ||
-                    [];
-
-                window.messages.push(
-                    message
-                );
-
-                if (
-                    typeof window.renderMessages ===
-                    'function'
-                ) {
-
-                    window.renderMessages();
-
-                } else {
-
-                    console.warn(
-                        '[DrawTogether] renderMessages() also does not exist.'
-                    );
-                }
             }
 
             console.log(
@@ -1207,48 +1182,48 @@
 
       function openModal() {
    
-       const modal = document.getElementById('canvas-modal');
+        const modal = document.getElementById('canvas-modal');
    
-       if (!modal) {
-           error('#canvas-modal not found');
-           return;
-       }
+        if (!modal) {
+            error('#canvas-modal not found');
+            return;
+        }
    
-       if (!setupCanvas()) {
-           return;
-       }
+        if (!setupCanvas()) {
+            return;
+        }
    
-       setupCanvasEvents();
-       setupToolbar();
+        setupCanvasEvents();
+        setupToolbar();
    
-       // Open the existing modal directly
-       modal.style.display = 'flex';
-       modal.style.visibility = 'visible';
-       modal.style.opacity = '1';
+        // Open the existing modal directly
+        modal.style.display = 'flex';
+        modal.style.visibility = 'visible';
+        modal.style.opacity = '1';
    
-       // Keep it above all other UI
-       modal.style.zIndex = '999999';
+        // Keep it above all other UI
+        modal.style.zIndex = '999999';
    
-       // Prevent modal itself from creating/receiving blur
-       modal.style.filter = 'none';
-       modal.style.backdropFilter = 'none';
-       modal.style.webkitBackdropFilter = 'none';
-       modal.style.transform = 'none';
+        // Prevent modal itself from creating/receiving blur
+        modal.style.filter = 'none';
+        modal.style.backdropFilter = 'none';
+        modal.style.webkitBackdropFilter = 'none';
+        modal.style.transform = 'none';
    
-       const content = modal.querySelector('.modal-content');
+        const content = modal.querySelector('.modal-content');
    
-       if (content) {
-           content.style.filter = 'none';
-           content.style.backdropFilter = 'none';
-           content.style.webkitBackdropFilter = 'none';
-           content.style.transform = 'none';
-           content.style.opacity = '1';
-       }
+        if (content) {
+            content.style.filter = 'none';
+            content.style.backdropFilter = 'none';
+            content.style.webkitBackdropFilter = 'none';
+            content.style.transform = 'none';
+            content.style.opacity = '1';
+        }
    
-       redraw();
+        redraw();
    
-       log('Modal opened');
-   }
+        log('Modal opened');
+    }
 
     function closeModal() {
 
@@ -1434,10 +1409,7 @@
 
         `;
 
-        // ---------------------------------------------
         // Tool buttons
-        // ---------------------------------------------
-
         const toolButtons =
             toolbar.querySelectorAll(
                 '.dt-tool'
@@ -1486,10 +1458,7 @@
             );
         }
 
-        // ---------------------------------------------
         // Color
-        // ---------------------------------------------
-
         const colorInput =
             document.getElementById(
                 'dt-color'
@@ -1507,10 +1476,7 @@
             );
         }
 
-        // ---------------------------------------------
         // Size
-        // ---------------------------------------------
-
         const sizeInput =
             document.getElementById(
                 'dt-size'
@@ -1531,10 +1497,7 @@
             );
         }
 
-        // ---------------------------------------------
         // Polygon sides
-        // ---------------------------------------------
-
         const sidesInput =
             document.getElementById(
                 'dt-poly-sides'
@@ -1568,49 +1531,43 @@
 
     function setupButtons() {
 
-        // =============================================
-      // SEND BUTTON
-      // =============================================
-      
-      if (!window.__drawTogetherSendHandler) {
-      
-          window.__drawTogetherSendHandler = true;
-      
-          document.addEventListener(
-              'click',
-              function (event) {
-      
-                  const button = event.target.closest(
-                      '#draw-send, #canvas-send-to-chat'
-                  );
-      
-                  if (!button) {
-                      return;
-                  }
-      
-                  event.preventDefault();
-                  event.stopImmediatePropagation();
-      
-                  console.log(
-                      '[DrawTogether] SEND BUTTON CLICKED'
-                  );
-      
-                  // Make the existing chat function available
-                  if (typeof addMessage === 'function') {
-                      window.addMessage = addMessage;
-                  }
-      
-                  sendDrawingToChat();
-      
-              },
-              true
-          );
-      }
+        // SEND BUTTON
+        if (!window.__drawTogetherSendHandler) {
+       
+            window.__drawTogetherSendHandler = true;
+       
+            document.addEventListener(
+                'click',
+                function (event) {
+       
+                    const button = event.target.closest(
+                        '#draw-send, #canvas-send-to-chat'
+                    );
+       
+                    if (!button) {
+                        return;
+                    }
+       
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+       
+                    console.log(
+                        '[DrawTogether] SEND BUTTON CLICKED'
+                    );
+       
+                    // Make the existing chat function available
+                    if (typeof addMessage === 'function') {
+                        window.addMessage = addMessage;
+                    }
+       
+                    sendDrawingToChat();
+       
+                },
+                true
+            );
+        }
 
-        // ---------------------------------------------
         // Close
-        // ---------------------------------------------
-
         if (!window.__drawTogetherCloseHandler) {
 
             window.__drawTogetherCloseHandler = true;
@@ -1640,10 +1597,7 @@
             );
         }
 
-        // ---------------------------------------------
         // Undo
-        // ---------------------------------------------
-
         if (!window.__drawTogetherUndoHandler) {
 
             window.__drawTogetherUndoHandler = true;
@@ -1669,10 +1623,7 @@
             );
         }
 
-        // ---------------------------------------------
         // Clear
-        // ---------------------------------------------
-
         if (!window.__drawTogetherClearHandler) {
 
             window.__drawTogetherClearHandler = true;
@@ -1700,10 +1651,7 @@
             );
         }
 
-        // ---------------------------------------------
         // New
-        // ---------------------------------------------
-
         if (!window.__drawTogetherNewHandler) {
 
             window.__drawTogetherNewHandler = true;
@@ -1755,10 +1703,7 @@
             const type =
                 randomInt(1, 5);
 
-            // -------------------------------------------
             // Brush
-            // -------------------------------------------
-
             if (type === 1) {
 
                 let x =
@@ -1837,10 +1782,7 @@
                 });
             }
 
-            // -------------------------------------------
             // Line
-            // -------------------------------------------
-
             else if (type === 2) {
 
                 result.push({
@@ -1880,10 +1822,7 @@
                 });
             }
 
-            // -------------------------------------------
             // Circle
-            // -------------------------------------------
-
             else if (type === 3) {
 
                 result.push({
@@ -1917,10 +1856,7 @@
                 });
             }
 
-            // -------------------------------------------
             // Rectangle
-            // -------------------------------------------
-
             else if (type === 4) {
 
                 result.push({
@@ -1960,10 +1896,7 @@
                 });
             }
 
-            // -------------------------------------------
             // Polygon
-            // -------------------------------------------
-
             else {
 
                 result.push({
@@ -2043,10 +1976,10 @@
                     drawingData,
 
                 status:
-                    'sent',
+                    'received',
 
                 type:
-                    'drawing'
+                    'normal'
             };
 
             console.log(
@@ -2059,27 +1992,19 @@
                 'function'
             ) {
 
+                console.log(
+                    '[DrawTogether] Adding partner drawing to chat'
+                );
+
                 window.addMessage(
                     message
                 );
 
             } else {
 
-                window.messages =
-                    window.messages ||
-                    [];
-
-                window.messages.push(
-                    message
+                error(
+                    'window.addMessage is not available'
                 );
-
-                if (
-                    typeof window.renderMessages ===
-                    'function'
-                ) {
-
-                    window.renderMessages();
-                }
             }
 
         } catch (err) {
@@ -2094,7 +2019,8 @@
     /*
      * Call this after a USER message is sent.
      *
-     * 5% chance.
+     * 100% chance for testing (set to 1).
+     * Change to 0.05 for 5% chance in production.
      */
     function maybePartnerDraw() {
 
