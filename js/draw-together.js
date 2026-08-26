@@ -267,7 +267,10 @@
             ) {
 
                 context.globalCompositeOperation =
-                    'destination-out';
+                    'source-over';
+            
+                context.strokeStyle =
+                    '#ffffff';
 
             } else {
 
