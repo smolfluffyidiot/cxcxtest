@@ -571,11 +571,8 @@
                 mode:
                     currentTool ===
                     'eraser'
-                        ? 'eraser'
-                        : 'brush',
-
-                color:
-                    currentColor,
+                        ? '#FFFFFF'
+                        : currentColor,
 
                 width:
                     currentSize,
