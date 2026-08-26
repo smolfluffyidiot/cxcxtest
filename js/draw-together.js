@@ -1158,6 +1158,8 @@
             console.log(
                 '[DrawTogether] Drawing sent successfully.'
             );
+            
+            clearDrawing();
 
             closeModal();
 
