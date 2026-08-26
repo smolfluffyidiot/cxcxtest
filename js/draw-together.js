@@ -575,10 +575,7 @@
                         : 'brush',
                 
                 color:
-                    currentTool ===
-                    'eraser'
-                        ? '#FFFFFF'
-                        : currentColor,
+                    currentColor,
 
                 width:
                     currentSize,
@@ -1077,110 +1074,131 @@
     // =====================================================
 
     function sendDrawingToChat() {
-
+    
         console.log(
             '[DrawTogether] Sending drawing message:'
         );
-
+    
         try {
-
+    
             if (
                 !actions ||
                 !actions.length
             ) {
-
+    
                 alert(
                     'Draw something first!'
                 );
-
+    
                 return;
             }
-
+    
             const drawingData =
                 JSON.parse(
                     JSON.stringify(
                         actions
                     )
                 );
-
+    
             const image =
                 createImageFromActions(
                     drawingData
                 );
-
+    
             const message = {
-
+    
                 id:
                     Date.now(),
-
+    
                 sender:
                     'user',
-
+    
                 text:
                     '',
-
+    
                 timestamp:
                     new Date(),
-
+    
                 image:
                     image,
-
+    
                 drawingData:
                     drawingData,
-
+    
                 status:
                     'sent',
-
+    
                 type:
                     'normal'
             };
-
+    
             console.log(
                 '[DrawTogether] Message object:',
                 message
             );
-
+    
             // Make sure addMessage is accessible
             if (
-                typeof window.addMessage ===
+                typeof window.addMessage !==
                 'function'
             ) {
-
-                console.log(
-                    '[DrawTogether] Calling addMessage()'
-                );
-
-                window.addMessage(
-                    message
-                );
-
-            } else {
-
+    
                 console.warn(
                     '[DrawTogether] addMessage() does not exist.'
                 );
+    
+                return;
             }
-
+    
+            console.log(
+                '[DrawTogether] Calling addMessage()'
+            );
+    
+            // Send first
+            window.addMessage(
+                message
+            );
+    
             console.log(
                 '[DrawTogether] Drawing sent successfully.'
             );
-            
-            clearDrawing();
-
+    
+            // =============================================
+            // CLEAR EVERYTHING AFTER SUCCESSFUL SEND
+            // =============================================
+    
+            actions = [];
+    
+            currentStroke = null;
+    
+            preview = null;
+    
+            startPoint = null;
+    
+            isDrawing = false;
+    
+            redraw();
+    
+            console.log(
+                '[DrawTogether] Canvas cleared.'
+            );
+    
+            // Close modal
             closeModal();
-
+    
         } catch (err) {
-
+    
             console.error(
                 '[DrawTogether] Send drawing failed:',
                 err
             );
-
+    
             alert(
                 'Failed to send drawing. Check the console.'
             );
         }
     }
+
 
     // =====================================================
     // OPEN / CLOSE MODAL
