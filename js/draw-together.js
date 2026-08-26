@@ -1467,38 +1467,6 @@
                       8
                     </button>
                 
-                    <button
-                      type="button"
-                      class="modal-btn draw-side-btn"
-                      data-sides="9"
-                    >
-                      9
-                    </button>
-                
-                    <button
-                      type="button"
-                      class="modal-btn draw-side-btn"
-                      data-sides="10"
-                    >
-                      10
-                    </button>
-                
-                    <button
-                      type="button"
-                      class="modal-btn draw-side-btn"
-                      data-sides="11"
-                    >
-                      11
-                    </button>
-                
-                    <button
-                      type="button"
-                      class="modal-btn draw-side-btn"
-                      data-sides="12"
-                    >
-                      12
-                    </button>
-                
                   </div>
 
             </div>
