@@ -1363,6 +1363,7 @@
                         display:flex;
                         align-items:center;
                         gap:5px;
+                        font-family: inherit;
                     "
                 >
                     颜色
@@ -1378,6 +1379,7 @@
                     style="
                         flex:1;
                         min-width:120px;
+                        font-family: inherit;
                     "
                 >
                     大小
@@ -1403,7 +1405,7 @@
                 "
             >
 
-                <label>
+                <label style="font-family: inherit;">
                     边数
                 </label>
 
@@ -1417,7 +1419,7 @@
                     hidden
                 >
 
-                <div class="draw-sides-buttons" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;margin-bottom:10px;">
+                <div class="draw-sides-buttons">
 
                     <button
                       type="button"
