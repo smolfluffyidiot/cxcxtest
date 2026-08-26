@@ -261,26 +261,12 @@
             context.lineWidth =
                 action.width || 4;
 
-            if (
-                action.mode ===
-                'eraser'
-            ) {
+            context.globalCompositeOperation =
+                'source-over';
 
-                context.globalCompositeOperation =
-                    'source-over';
-            
-                context.strokeStyle =
-                    '#ffffff';
-
-            } else {
-
-                context.globalCompositeOperation =
-                    'source-over';
-
-                context.strokeStyle =
-                    action.color ||
-                    '#111111';
-            }
+            context.strokeStyle =
+                action.color ||
+                '#111111';
 
             const points =
                 action.points || [];
@@ -571,14 +557,12 @@
 
                 type: 'stroke',
 
-                mode:
-                    currentTool ===
-                    'eraser'
-                        ? 'eraser'
-                        : 'brush',
+                mode: 'brush',
                 
                 color:
-                    currentColor,
+                currentTool === 'eraser'
+                    ? '#ffffff'
+                    : currentColor,
 
                 width:
                     currentSize,
