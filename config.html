@@ -2060,16 +2060,25 @@
             </div>
     
             <div class="draw-header-buttons">
-    
-              <button
-                type="button"
-                id="draw-send"
-                class="modal-btn modal-btn-primary"
-                onclick="window.drawTogether.sendDrawing();"
-              >
-                发送
-              </button>
-    
+
+                <button
+                  type="button"
+                  id="draw-undo"
+                  class="modal-btn modal-btn-secondary"
+                  onclick="window.drawTogether.undo();"
+                >
+                  撤回
+                </button>
+                
+                <button
+                  type="button"
+                  id="draw-clear"
+                  class="modal-btn modal-btn-secondary"
+                  onclick="window.drawTogether.clear();"
+                >
+                  清空
+                </button>
+                
               <button
                 type="button"
                 id="draw-close"
@@ -2077,6 +2086,15 @@
                 onclick="window.drawTogether.close();"
               >
                 关闭
+              </button>
+                
+              <button
+                type="button"
+                id="draw-send"
+                class="modal-btn modal-btn-primary"
+                onclick="window.drawTogether.sendDrawing();"
+              >
+                发送
               </button>
     
             </div>
@@ -2689,6 +2707,8 @@
       }
     
     
+      #canvas-modal #draw-clear,
+      #canvas-modal #draw-undo,
       #canvas-modal #draw-send,
       #canvas-modal #draw-close {
     
