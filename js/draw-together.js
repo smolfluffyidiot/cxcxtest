@@ -1304,7 +1304,7 @@
                     class="dt-tool"
                     data-tool="brush"
                 >
-                    🖌 画笔
+                    画笔
                 </button>
 
                 <button
@@ -1312,7 +1312,7 @@
                     class="dt-tool"
                     data-tool="eraser"
                 >
-                    🧽 橡皮擦
+                    橡皮擦
                 </button>
 
                 <button
@@ -1320,7 +1320,7 @@
                     class="dt-tool"
                     data-tool="line"
                 >
-                    ╱ 直线
+                    直线
                 </button>
 
                 <button
@@ -1328,7 +1328,7 @@
                     class="dt-tool"
                     data-tool="rect"
                 >
-                    □ 方形
+                    方形
                 </button>
 
                 <button
@@ -1336,7 +1336,7 @@
                     class="dt-tool"
                     data-tool="circle"
                 >
-                    ○ 圆形
+                    圆形
                 </button>
 
                 <button
@@ -1344,7 +1344,7 @@
                     class="dt-tool"
                     data-tool="polygon"
                 >
-                    ⬡ 多边形
+                    多边形
                 </button>
 
             </div>
