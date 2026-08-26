@@ -7,3 +7,7 @@
 #canvas-modal { z-index: 999999 !important; }
 #canvas-modal .modal-content { transform: none !important; opacity: 1 !important; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
 #canvas-modal .modal-content * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+#canvas-modal #dt-size {
+    width: 100%;
+    accent-color: var(--accent-color);
+}
