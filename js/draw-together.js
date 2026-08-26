@@ -1417,7 +1417,7 @@
                     hidden
                 >
 
-                <div class="draw-sides-buttons" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;width:100%;">
+                <div class="draw-sides-buttons" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:10px;">
 
                     <button
                       type="button"
