@@ -127,6 +127,569 @@
     }
 
     // =====================================================
+// CUSTOM COLOR PICKER
+// =====================================================
+
+let pickerHue = 0;
+let pickerSaturation = 1;
+let pickerBrightness = 1;
+
+function hsvToRgb(h, s, v) {
+
+    const c = v * s;
+    const x =
+        c *
+        (1 - Math.abs(
+            (h / 60) % 2 - 1
+        ));
+
+    const m = v - c;
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+
+    if (h < 60) {
+        r = c;
+        g = x;
+    }
+    else if (h < 120) {
+        r = x;
+        g = c;
+    }
+    else if (h < 180) {
+        g = c;
+        b = x;
+    }
+    else if (h < 240) {
+        g = x;
+        b = c;
+    }
+    else if (h < 300) {
+        r = x;
+        b = c;
+    }
+    else {
+        r = c;
+        b = x;
+    }
+
+    return {
+        r: Math.round((r + m) * 255),
+        g: Math.round((g + m) * 255),
+        b: Math.round((b + m) * 255)
+    };
+}
+
+
+function rgbToHex(r, g, b) {
+
+    return '#' +
+        [r, g, b]
+            .map(function (value) {
+
+                return value
+                    .toString(16)
+                    .padStart(2, '0');
+
+            })
+            .join('');
+}
+
+
+function updateColorPicker() {
+
+    const rgb =
+        hsvToRgb(
+            pickerHue,
+            pickerSaturation,
+            pickerBrightness
+        );
+
+    currentColor =
+        rgbToHex(
+            rgb.r,
+            rgb.g,
+            rgb.b
+        );
+
+    const swatch =
+        document.getElementById(
+            'dt-color-swatch'
+        );
+
+    const preview =
+        document.getElementById(
+            'dt-picker-preview'
+        );
+
+    const hex =
+        document.getElementById(
+            'dt-picker-hex'
+        );
+
+    if (swatch) {
+        swatch.style.background =
+            currentColor;
+    }
+
+    if (preview) {
+        preview.style.background =
+            currentColor;
+    }
+
+    if (hex) {
+        hex.textContent =
+            currentColor;
+    }
+
+    // Move saturation cursor
+
+    const saturation =
+        document.getElementById(
+            'dt-saturation'
+        );
+
+    const colorCursor =
+        document.getElementById(
+            'dt-color-cursor'
+        );
+
+    if (
+        saturation &&
+        colorCursor
+    ) {
+
+        colorCursor.style.left =
+            (pickerSaturation * 100) + '%';
+
+        colorCursor.style.top =
+            ((1 - pickerBrightness) * 100) + '%';
+    }
+
+
+    // Move hue cursor
+
+    const hue =
+        document.getElementById(
+            'dt-hue'
+        );
+
+    const hueCursor =
+        document.getElementById(
+            'dt-hue-cursor'
+        );
+
+    if (
+        hue &&
+        hueCursor
+    ) {
+
+        hueCursor.style.left =
+            ((pickerHue / 360) * 100) + '%';
+    }
+
+
+    // RGB fields
+
+    const red =
+        document.getElementById(
+            'dt-red'
+        );
+
+    const green =
+        document.getElementById(
+            'dt-green'
+        );
+
+    const blue =
+        document.getElementById(
+            'dt-blue'
+        );
+
+    if (red) {
+        red.value = rgb.r;
+    }
+
+    if (green) {
+        green.value = rgb.g;
+    }
+
+    if (blue) {
+        blue.value = rgb.b;
+    }
+
+
+    // Update saturation color
+
+    if (saturation) {
+
+        saturation.style.background =
+            'linear-gradient(to bottom, transparent, #000), ' +
+            'linear-gradient(to right, #fff, hsl(' +
+            pickerHue +
+            ', 100%, 50%))';
+    }
+}
+
+
+function setColorFromRGB(r, g, b) {
+
+    r = Math.max(
+        0,
+        Math.min(255, r)
+    );
+
+    g = Math.max(
+        0,
+        Math.min(255, g)
+    );
+
+    b = Math.max(
+        0,
+        Math.min(255, b)
+    );
+
+    const max =
+        Math.max(r, g, b) / 255;
+
+    const min =
+        Math.min(r, g, b) / 255;
+
+    const delta =
+        max - min;
+
+    let h = 0;
+
+    if (delta !== 0) {
+
+        if (max === r / 255) {
+
+            h =
+                60 *
+                (
+                    (
+                        ((g - b) / 255) /
+                        delta
+                    ) % 6
+                );
+
+        }
+        else if (max === g / 255) {
+
+            h =
+                60 *
+                (
+                    ((b - r) / 255) /
+                    delta +
+                    2
+                );
+
+        }
+        else {
+
+            h =
+                60 *
+                (
+                    ((r - g) / 255) /
+                    delta +
+                    4
+                );
+        }
+    }
+
+    if (h < 0) {
+        h += 360;
+    }
+
+    const s =
+        max === 0
+            ? 0
+            : delta / max;
+
+    pickerHue = h;
+    pickerSaturation = s;
+    pickerBrightness = max;
+
+    updateColorPicker();
+}
+
+
+function setupCustomColorPicker() {
+
+    const button =
+        document.getElementById(
+            'dt-color-button'
+        );
+
+    const picker =
+        document.getElementById(
+            'dt-color-picker'
+        );
+
+    const saturation =
+        document.getElementById(
+            'dt-saturation'
+        );
+
+    const hue =
+        document.getElementById(
+            'dt-hue'
+        );
+
+    if (
+        !button ||
+        !picker ||
+        !saturation ||
+        !hue
+    ) {
+        return;
+    }
+
+
+    // -----------------------------------------------
+    // Open / close
+    // -----------------------------------------------
+
+    button.addEventListener(
+        'click',
+        function (event) {
+
+            event.stopPropagation();
+
+            picker.classList.toggle(
+                'open'
+            );
+
+        }
+    );
+
+
+    // Close when clicking outside
+
+    document.addEventListener(
+        'click',
+        function (event) {
+
+            if (
+                !picker.contains(event.target) &&
+                !button.contains(event.target)
+            ) {
+
+                picker.classList.remove(
+                    'open'
+                );
+            }
+        }
+    );
+
+
+    // -----------------------------------------------
+    // Saturation / brightness
+    // -----------------------------------------------
+
+    function updateSaturation(event) {
+
+        const rect =
+            saturation.getBoundingClientRect();
+
+        const x =
+            Math.max(
+                0,
+                Math.min(
+                    rect.width,
+                    event.clientX - rect.left
+                )
+            );
+
+        const y =
+            Math.max(
+                0,
+                Math.min(
+                    rect.height,
+                    event.clientY - rect.top
+                )
+            );
+
+        pickerSaturation =
+            x / rect.width;
+
+        pickerBrightness =
+            1 - (y / rect.height);
+
+        updateColorPicker();
+    }
+
+
+    saturation.addEventListener(
+        'pointerdown',
+        function (event) {
+
+            event.preventDefault();
+
+            saturation.setPointerCapture(
+                event.pointerId
+            );
+
+            updateSaturation(event);
+        }
+    );
+
+    saturation.addEventListener(
+        'pointermove',
+        function (event) {
+
+            if (
+                event.buttons
+            ) {
+                updateSaturation(event);
+            }
+        }
+    );
+
+
+    // -----------------------------------------------
+    // Hue
+    // -----------------------------------------------
+
+    function updateHue(event) {
+
+        const rect =
+            hue.getBoundingClientRect();
+
+        const x =
+            Math.max(
+                0,
+                Math.min(
+                    rect.width,
+                    event.clientX - rect.left
+                )
+            );
+
+        pickerHue =
+            (x / rect.width) * 360;
+
+        updateColorPicker();
+    }
+
+
+    hue.addEventListener(
+        'pointerdown',
+        function (event) {
+
+            event.preventDefault();
+
+            hue.setPointerCapture(
+                event.pointerId
+            );
+
+            updateHue(event);
+        }
+    );
+
+    hue.addEventListener(
+        'pointermove',
+        function (event) {
+
+            if (
+                event.buttons
+            ) {
+                updateHue(event);
+            }
+        }
+    );
+
+
+    // -----------------------------------------------
+    // RGB inputs
+    // -----------------------------------------------
+
+    const red =
+        document.getElementById(
+            'dt-red'
+        );
+
+    const green =
+        document.getElementById(
+            'dt-green'
+        );
+
+    const blue =
+        document.getElementById(
+            'dt-blue'
+        );
+
+
+    function updateFromRGBInputs() {
+
+        const r =
+            Math.max(
+                0,
+                Math.min(
+                    255,
+                    parseInt(red.value, 10) || 0
+                )
+            );
+
+        const g =
+            Math.max(
+                0,
+                Math.min(
+                    255,
+                    parseInt(green.value, 10) || 0
+                )
+            );
+
+        const b =
+            Math.max(
+                0,
+                Math.min(
+                    255,
+                    parseInt(blue.value, 10) || 0
+                )
+            );
+
+        setColorFromRGB(
+            r,
+            g,
+            b
+        );
+    }
+
+
+    if (red) {
+        red.addEventListener(
+            'input',
+            updateFromRGBInputs
+        );
+    }
+
+    if (green) {
+        green.addEventListener(
+            'input',
+            updateFromRGBInputs
+        );
+    }
+
+    if (blue) {
+        blue.addEventListener(
+            'input',
+            updateFromRGBInputs
+        );
+    }
+
+
+    // Initial color
+
+    setColorFromRGB(
+        17,
+        17,
+        17
+    );
+}
+
+
+    // =====================================================
     // GET ELEMENTS
     // =====================================================
 
@@ -1358,22 +1921,104 @@
                 "
             >
 
-                <label
-                    style="
-                        display:flex;
-                        align-items:center;
-                        gap:5px;
-                        font-family: inherit;
-                    "
-                >
-                    颜色
+                <div class="dt-color-wrapper">
 
-                    <input
-                        id="dt-color"
-                        type="color"
-                        value="#111111"
-                    >
-                </label>
+    <button
+        type="button"
+        id="dt-color-button"
+        class="dt-color-button"
+        aria-label="Choose color"
+    >
+        <span id="dt-color-swatch"></span>
+    </button>
+
+    <span class="dt-color-label">
+        颜色
+    </span>
+
+    <div
+        id="dt-color-picker"
+        class="dt-color-picker"
+    >
+
+        <!-- Saturation / brightness -->
+        <div
+            id="dt-saturation"
+            class="dt-saturation"
+        >
+            <div
+                id="dt-color-cursor"
+                class="dt-color-cursor"
+            ></div>
+        </div>
+
+        <!-- Hue -->
+        <div
+            id="dt-hue"
+            class="dt-hue"
+        >
+            <div
+                id="dt-hue-cursor"
+                class="dt-hue-cursor"
+            ></div>
+        </div>
+
+        <!-- Current color -->
+        <div class="dt-picker-preview-row">
+
+            <div
+                id="dt-picker-preview"
+                class="dt-picker-preview"
+            ></div>
+
+            <span id="dt-picker-hex">
+                #111111
+            </span>
+
+        </div>
+
+        <!-- RGB -->
+        <div class="dt-rgb-row">
+
+            <label>
+                R
+                <input
+                    id="dt-red"
+                    type="number"
+                    min="0"
+                    max="255"
+                    value="17"
+                >
+            </label>
+
+            <label>
+                G
+                <input
+                    id="dt-green"
+                    type="number"
+                    min="0"
+                    max="255"
+                    value="17"
+                >
+            </label>
+
+            <label>
+                B
+                <input
+                    id="dt-blue"
+                    type="number"
+                    min="0"
+                    max="255"
+                    value="17"
+                >
+            </label>
+
+        </div>
+
+    </div>
+
+</div>
+
 
                 <label
                     style="
@@ -1632,6 +2277,8 @@ sideButtons.forEach(
                 }
             );
         }
+        setupCustomColorPicker();
+
     }
 
     // =====================================================
