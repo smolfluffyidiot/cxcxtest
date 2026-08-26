@@ -1301,7 +1301,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="brush"
                 >
                     画笔
@@ -1309,7 +1309,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="eraser"
                 >
                     橡皮擦
@@ -1317,7 +1317,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="line"
                 >
                     直线
@@ -1325,7 +1325,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="rect"
                 >
                     方形
@@ -1333,7 +1333,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="circle"
                 >
                     圆形
@@ -1341,7 +1341,7 @@
 
                 <button
                     type="button"
-                    class="dt-tool"
+                    class="dt-tool modal-btn"
                     data-tool="polygon"
                 >
                     多边形
