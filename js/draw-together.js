@@ -1414,7 +1414,92 @@
                     max="12"
                     value="5"
                     style="width:60px;"
+                    hidden
                 >
+
+                <div class="draw-sides-buttons">
+
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="3"
+                    >
+                      3
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="4"
+                    >
+                      4
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn active"
+                      data-sides="5"
+                    >
+                      5
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="6"
+                    >
+                      6
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="7"
+                    >
+                      7
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="8"
+                    >
+                      8
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="9"
+                    >
+                      9
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="10"
+                    >
+                      10
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="11"
+                    >
+                      11
+                    </button>
+                
+                    <button
+                      type="button"
+                      class="modal-btn draw-side-btn"
+                      data-sides="12"
+                    >
+                      12
+                    </button>
+                
+                  </div>
 
             </div>
 
@@ -1513,6 +1598,49 @@
             document.getElementById(
                 'dt-poly-sides'
             );
+        const sideButtons =
+    toolbar.querySelectorAll(
+        '.draw-side-btn'
+    );
+
+sideButtons.forEach(
+    function (button) {
+
+        button.addEventListener(
+            'click',
+            function () {
+
+                const sides =
+                    parseInt(
+                        button.dataset.sides,
+                        10
+                    ) || 5;
+
+                // Keep the existing input updated
+                if (sidesInput) {
+                    sidesInput.value = sides;
+                }
+
+                // Update polygon setting
+                polygonSides = sides;
+
+                // Update active button
+                sideButtons.forEach(
+                    function (b) {
+                        b.classList.remove(
+                            'active'
+                        );
+                    }
+                );
+
+                button.classList.add(
+                    'active'
+                );
+
+            }
+        );
+    }
+);
 
         if (sidesInput) {
 
