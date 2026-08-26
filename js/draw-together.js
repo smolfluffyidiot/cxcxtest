@@ -571,6 +571,12 @@
                 mode:
                     currentTool ===
                     'eraser'
+                        ? 'eraser'
+                        : 'brush',
+                
+                color:
+                    currentTool ===
+                    'eraser'
                         ? '#FFFFFF'
                         : currentColor,
 
