@@ -7,40 +7,4 @@
 #canvas-modal { z-index: 999999 !important; }
 #canvas-modal .modal-content { transform: none !important; opacity: 1 !important; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
 #canvas-modal .modal-content * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
-#canvas-modal #dt-size {
-    width: 100%;
-    accent-color: var(--accent-color);
-}
-
-#canvas-modal #dt-size::-webkit-slider-runnable-track {
-    height: 6px;
-    background: var(--border-color);
-    border-radius: 6px;
-}
-
-#canvas-modal #dt-size::-webkit-slider-thumb {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    margin-top: -5px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    border: 2px solid var(--accent-color);
-    cursor: pointer;
-}
-
-#canvas-modal #dt-size::-moz-range-track {
-    height: 6px;
-    background: var(--border-color);
-    border-radius: 6px;
-}
-
-#canvas-modal #dt-size::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    border: 2px solid var(--accent-color);
-    cursor: pointer;
-}
 
